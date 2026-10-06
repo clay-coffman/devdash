@@ -4,6 +4,8 @@ const $ = (id) => document.getElementById(id);
 const GiB = 1024 ** 3, MiB = 1024 ** 2;
 let token = '';
 let lastState = null;
+let checkoutOrder = []; // Hold row positions between polls; only explicitly re-sort.
+let lastHistory = null; // samples from /api/history, redrawn when the chart is opened
 let checkoutHistory = {}; // path -> [{t, bytes}] from /api/history
 const pendingKill = new Map(); // pid -> time TERM was sent
 const settings = Object.assign({ availGiB: 4, etaMin: 15, psiSome: 10 }, JSON.parse(localStorage.getItem('devdash.settings') || '{}'));
@@ -46,6 +48,11 @@ function details(key, summaryChildren, ...body) {
   d.addEventListener('toggle', () => { if (d.open) openSections.add(key); else openSections.delete(key); });
   return d;
 }
+// chip renders one pill: a tone dot, a label, and an optional dimmed suffix.
+function chip(tone, label, dim, attrs = {}) {
+  const { class: extra = '', ...rest } = attrs;
+  return el('span', { class: `chip t-${tone} ${extra}`.trim(), ...rest }, label, dim ? el('span', { class: 'dim', text: ' ' + dim }) : null);
+}
 function isWebApp(p, rel) {
   return /\b(vite|next|webpack|astro|remix|nuxt)\b/.test(p.cmd) || /(^|\/)[^/]*(web|frontend|ui)$/.test(rel) || /\bpreview\b/.test(p.cmd);
 }
@@ -64,6 +71,7 @@ function fmtDur(s) {
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
+    if (v === undefined) continue;
     if (k === 'class') e.className = v;
     else if (k === 'text') e.textContent = v;
     else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
@@ -144,9 +152,6 @@ function renderHeader(s) {
   $('host').textContent = s.host;
   $('meta').textContent = `up ${fmtDur(s.uptime)} · ${s.counts.agents} agents, ${s.counts.working} working · ${s.counts.stacks} stacks · ${s.counts.containers} containers`;
   const etaMin = forecast(s.live, settings.availGiB * GiB);
-  const etaText = etaMin == null ? '' : etaMin < 60 ? ` · ≈${Math.max(0, Math.round(etaMin))} min to ${settings.availGiB} GiB free at this rate` : '';
-  $('glance').textContent = `mem ${fmtBytes(s.mem.used)} used · ${fmtBytes(s.mem.available)} free · cpu ${s.cpu.percent.toFixed(0)}%${etaText}`;
-  $('glance').className = pct(s.mem.available, s.mem.total) < 10 || (etaMin != null && etaMin < settings.etaMin) ? 'bad' : 'muted';
   maybeNotify(s, etaMin);
   $('notify-btn').textContent = Notification.permission === 'granted' ? 'Notifying' : Notification.permission === 'denied' ? 'Notifications blocked' : 'Notify';
   $('notify-btn').disabled = Notification.permission !== 'default';
@@ -155,17 +160,20 @@ function renderHeader(s) {
   else { st.textContent = 'live · ' + new Date(s.now).toLocaleTimeString(); st.className = 'muted'; }
 
   const m = s.mem, usedP = pct(m.used, m.total), availP = pct(m.available, m.total);
-  $('mem-big').textContent = `${fmtBytes(m.used)} / ${fmtBytes(m.total)}`;
-  $('mem-sub').textContent = s.no_swap ? 'no swap: OOM kills land immediately' : `swap ${fmtBytes(m.swap_total - m.swap_free)} / ${fmtBytes(m.swap_total)}`;
+  $('mem-big').replaceChildren(fmtBytes(m.used), el('small', { text: ` / ${fmtBytes(m.total)}` }));
   const memLevel = availP < 7 ? 'bad' : availP < 15 ? 'warn' : '';
+  // The one-line headline under the title: the forecast when it matters, otherwise headroom.
+  const etaLevel = etaMin == null ? '' : etaMin < settings.etaMin ? 'bad' : etaMin < 60 ? 'warn' : '';
+  const sub = $('mem-sub');
+  if (etaMin != null && etaMin < 240) { sub.textContent = `≈${Math.max(0, Math.round(etaMin))} min to ${settings.availGiB} GiB free at this rate`; sub.className = 'muted ' + etaLevel; }
+  else { sub.textContent = `${fmtBytes(m.available)} available`; sub.className = 'muted ' + memLevel; }
   const mb = $('mem-bar'); mb.style.width = usedP.toFixed(1) + '%'; mb.className = memLevel;
   const psi = m.psi || {};
   kv($('mem-kv'), [
     ['available', `${fmtBytes(m.available)} (${availP.toFixed(0)}%)`, memLevel],
-    ['buffers + cache', fmtBytes(m.buffers + m.cached)],
-    ['pressure, some 10s / 60s', `${(psi.Some10 || 0).toFixed(1)}% / ${(psi.Some60 || 0).toFixed(1)}%`, level(psi.Some10 || 0, 5, 20)],
-    ['pressure, full 10s', `${(psi.Full10 || 0).toFixed(1)}%`, level(psi.Full10 || 0, 1, 5)],
-    ['forecast', etaMin == null ? 'not falling' : etaMin < 240 ? `≈${Math.max(0, Math.round(etaMin))} min to ${settings.availGiB} GiB` : 'falling slowly', etaMin == null ? '' : etaMin < settings.etaMin ? 'bad' : etaMin < 60 ? 'warn' : ''],
+    ['pressure, some / full 10s', `${(psi.Some10 || 0).toFixed(1)}% / ${(psi.Full10 || 0).toFixed(1)}%`, level(psi.Some10 || 0, 5, 20) || level(psi.Full10 || 0, 1, 5), `some 60s: ${(psi.Some60 || 0).toFixed(1)}%`],
+    ['forecast', etaMin == null ? 'not falling' : etaMin < 240 ? `≈${Math.max(0, Math.round(etaMin))} min to ${settings.availGiB} GiB` : 'falling slowly', etaLevel],
+    ['swap', s.no_swap ? 'none' : `${fmtBytes(m.swap_total - m.swap_free)} / ${fmtBytes(m.swap_total)}`, '', s.no_swap ? 'no swap: OOM kills land immediately' : ''],
   ]);
   spark($('mem-spark'), s.live.map(p => p.used), m.total, '#d64545', false);
 
@@ -175,7 +183,7 @@ function renderHeader(s) {
   const cb = $('cpu-bar'); cb.style.width = Math.min(c.percent, 100).toFixed(1) + '%'; cb.className = level(c.percent, 80, 95);
   kv($('cpu-kv'), [
     ['load₁ vs ' + s.cores + ' cores', `${loadP.toFixed(0)}%`, level(loadP, 100, 200)],
-    ['pressure, some 10s / 60s', `${(c.psi.Some10 || 0).toFixed(0)}% / ${(c.psi.Some60 || 0).toFixed(0)}%`, level(c.psi.Some10 || 0, 30, 60)],
+    ['pressure, some 10s', `${(c.psi.Some10 || 0).toFixed(0)}%`, level(c.psi.Some10 || 0, 30, 60), `some 60s: ${(c.psi.Some60 || 0).toFixed(0)}%`],
     ['runnable / threads', `${c.load.Running} / ${c.load.Threads}`],
   ]);
   spark($('cpu-spark'), s.live.map(p => p.cpu), 100, '#3b82f6', true);
@@ -187,8 +195,6 @@ function renderHeader(s) {
     ['your processes', fmtBytes(b.own_processes), '', 'RSS sum; shared pages counted more than once'],
     ['checkouts', String(s.checkouts.length)],
   ]);
-  const dfRows = (s.docker.df || []).map(d => [`docker ${d.type.toLowerCase().replace('local ', '')} ${d.active}/${d.total}`, `${fmtBytes(d.size)}`, '', `${fmtBytes(d.reclaimable)} reclaimable`]);
-  kv($('docker-df'), dfRows);
 
   $('disk-list').replaceChildren(...s.disks.map(d => {
     const p = pct(d.used, d.total);
@@ -238,7 +244,7 @@ function containerTable(stack) {
     const row = el('tr', { class: c.state === 'running' ? '' : 'exited' });
     row.append(el('td', { text: c.service || c.name, title: c.name + ' · ' + c.image }));
     const status = el('td', { text: c.status.replace(/\s*\(.*\)\s*$/, '') + ' ' });
-    if (c.health) status.append(el('span', { class: 'badge ' + c.health, text: c.health }));
+    if (c.health) status.append(chip(c.health === 'healthy' ? 'ok' : 'bad', c.health, null, { class: 'bare' }));
     row.append(status);
     const ports = el('td', {});
     (c.ports || []).forEach((port, i) => { if (i) ports.append(' '); ports.append(link(port)); });
@@ -302,14 +308,16 @@ function drawCheckoutSparks() {
   }
 }
 
-function verdictPill(co) {
+function verdictChip(co) {
   const r = co.reclaim;
   if (!r) return null;
   const sc = r.score;
-  const cls = sc >= 70 ? 'v-high' : sc >= 40 ? 'v-mid' : sc > 0 ? 'v-low' : 'v-never';
+  const tone = sc >= 70 ? 'ok' : sc > 0 ? 'warn' : 'muted';
   const label = sc >= 70 ? 'stoppable' : sc >= 40 ? 'probably stoppable' : sc > 0 ? 'ask first' : 'in use';
-  return el('span', { class: 'pill ' + cls, title: `reclaim score ${sc}`, text: `${label} · ${r.reasons.join(' · ')}` });
+  return chip(tone, label, r.reasons.join(' · '), { class: 'bare', title: `reclaim score ${sc}` });
 }
+const agentTone = { working: 'accent', blocked: 'warn', done: 'ok' };
+const stackTone = { live: 'ok', detached: 'warn', orphaned: 'bad' };
 
 function card(co, unattributed) {
   const c = el('div', { class: 'card' + (unattributed ? ' unattributed' : '') });
@@ -324,43 +332,65 @@ function card(co, unattributed) {
       else others.set(label, [...(others.get(label) || []), port]);
     }
   }
-  const stackBytes = co.stacks.reduce((a, s) => a + s.bytes, 0);
+  // Identity and memory form a consistent two-column header.
   c.append(el('div', { class: 'card-head' },
-    el('h3', { text: unattributed ? 'Unattributed' : co.display.split('/').pop() }),
-    co.branch ? el('span', { class: 'branch', text: co.branch }) : null,
-    ...views.map(v => el('a', { class: 'view', href: `http://localhost:${v.port}/`, target: '_blank', rel: 'noopener' }, v.label + ' ', el('span', { class: 'port', text: ':' + v.port }))),
-    el('span', { class: 'right' },
-      growthBadge(co),
-      unattributed ? null : el('canvas', { class: 'co-spark', 'data-path': co.path, width: 96, height: 20, title: 'last 24 hours' }),
-      el('span', { class: 'total', text: fmtBytes(co.total_bytes) }))));
-  const meta = el('div', { class: 'card-meta' },
-    el('span', { class: 'path', text: unattributed ? 'outside any git checkout' : co.display }));
-  for (const [label, ports] of others) {
-    meta.append(el('span', { class: 'portgroup' }, label + ' ', ...ports.flatMap((port, i) => [i ? ' ' : null, link(port)])));
+    el('div', { class: 'card-identity' },
+      el('h3', { text: unattributed ? 'Unattributed' : co.display.split('/').pop(), title: co.display }),
+      el('div', { class: 'branch', text: unattributed ? 'Outside any git checkout' : co.branch || co.display })),
+    el('div', { class: 'card-metric' },
+      el('div', { class: 'memory-reading' },
+        unattributed ? null : el('canvas', { class: 'co-spark', 'data-path': co.path, width: 96, height: 20, title: 'last 24 hours' }),
+        el('div', {}, el('span', { class: 'metric-label', text: 'Memory' }),
+          el('span', { class: 'total', text: fmtBytes(co.total_bytes) }))),
+      growthBadge(co))));
+  // App actions get their own row, never mixed with infrastructure ports or status.
+  if (views.length) {
+    c.append(el('div', { class: 'card-apps' },
+      ...views.map(v => el('a', {
+        class: 'view', href: `http://localhost:${v.port}/`, target: '_blank', rel: 'noopener',
+        title: `Open ${v.label} on port ${v.port} in a new tab`,
+        'aria-label': `Open ${v.label}, port ${v.port} (opens in a new tab)`,
+      }, `Open ${v.label}`, el('span', { class: 'port', text: ':' + v.port }), el('span', { 'aria-hidden': 'true', text: '↗' })))));
   }
-  if (!unattributed) meta.append(verdictPill(co));
-  c.append(meta);
+  // Everything diagnostic lives behind one disclosure; safety status stays visible.
+  const body = el('div', { class: 'resource-body' },
+    el('div', { class: 'resource-path mono', text: co.display }));
   if (co.agents.length) {
-    c.append(el('div', { class: 'agents' }, ...co.agents.map(a =>
-      el('span', { class: 'agent ' + a.status, text: `${a.name || a.title || 'agent'} · ${a.status}${a.pr ? ' · ' + a.pr : ''}`, title: [a.group, a.title, a.context].filter(Boolean).join('\n') }))));
+    body.append(el('div', { class: 'resource-agents', 'aria-label': 'Agents' },
+      ...co.agents.map(a => chip(agentTone[a.status] || 'muted', a.name || a.title || 'agent', a.status + (a.pr ? ' · ' + a.pr : ''),
+        { title: [a.group, a.title, a.context].filter(Boolean).join('\n') }))));
+  }
+  if (others.size) {
+    body.append(el('div', { class: 'resource-ports' }, el('span', { text: 'Other ports', class: 'muted' }),
+      ...Array.from(others, ([label, ports]) => el('span', { class: 'portgroup' }, label + ' ',
+        ...ports.flatMap((port, i) => [i ? ' ' : null, link(port)])))));
   }
   const folds = el('div', { class: 'folds' });
   if (co.processes.length) {
     folds.append(details(co.path + '|procs',
-      [el('b', { text: `${co.processes.length} processes` }), el('span', { class: 'muted', text: fmtBytes(co.proc_bytes) })],
-      processTable(co.processes, co)));
+      [el('b', { text: `${co.processes.length} processes` }), el('span', { text: fmtBytes(co.proc_bytes) })],
+      el('div', { class: 'table-scroll' }, processTable(co.processes, co))));
   }
   for (const st of co.stacks) {
     const summary = [el('b', { text: st.project }),
-      el('span', { class: 'badge ' + st.class, text: st.class }),
-      el('span', { class: 'muted', text: `${st.running}/${st.containers.length} running · ${fmtBytes(st.bytes)}${st.volumes ? ` · ${st.volumes} vol` : ''}` })];
-    if (st.class !== 'foreign') {
-      summary.push(el('button', { class: 'danger stop-stack', text: 'Stop stack',
-        onclick: (e) => { e.preventDefault(); confirmAction('stack.down', st, co); } }));
-    }
-    folds.append(details(co.path + '|stack|' + st.project, summary, containerTable(st)));
+      chip(stackTone[st.class] || 'muted', st.class, null, { class: 'bare' }),
+      el('span', { text: `${st.running}/${st.containers.length} running · ${fmtBytes(st.bytes)}${st.volumes ? ` · ${st.volumes} vol` : ''}` })];
+    const tools = st.class === 'foreign' ? null : el('div', { class: 'fold-tools' },
+      el('button', { class: 'danger', text: 'Stop stack', onclick: () => confirmAction('stack.down', st, co) }));
+    folds.append(details(co.path + '|stack|' + st.project, summary, tools,
+      el('div', { class: 'table-scroll' }, containerTable(st))));
   }
-  if (folds.childElementCount) c.append(folds);
+  body.append(folds);
+  const counts = [`${co.processes.length} ${co.processes.length === 1 ? 'process' : 'processes'}`];
+  if (co.stacks.length) counts.push(`${co.stacks.length} ${co.stacks.length === 1 ? 'stack' : 'stacks'}`);
+  if (co.agents.length) counts.push(`${co.agents.length} ${co.agents.length === 1 ? 'agent' : 'agents'}`);
+  const resources = details(co.path + '|resources', [
+    el('b', { text: 'Resources' }),
+    el('span', { class: 'resource-counts', text: counts.join(' · ') }),
+    unattributed ? null : el('span', { class: 'resource-verdict' }, verdictChip(co)),
+  ], body);
+  resources.className += ' card-resources';
+  c.append(resources);
   return c;
 }
 
@@ -369,30 +399,52 @@ function renderReclaim(s) {
   const tight = pct(s.mem.available, s.mem.total) < 15 || (s.mem.psi.Some10 || 0) > 5;
   sec.hidden = !s.reclaim.length;
   sec.classList.toggle('tight', tight);
-  $('reclaim-sub').textContent = tight ? 'memory is tight' : 'safest to stop, best first';
-  $('reclaim-list').replaceChildren(...s.reclaim.map(c =>
-    el('div', { class: 'cand' },
-      el('span', { class: 'name' }, el('b', { text: c.display.split('/').pop() }), c.branch ? el('span', { class: 'branch', text: c.branch }) : null),
-      el('span', { class: 'muted reason', text: c.reasons.join(' · ') }),
-      el('span', { class: 'bytes', text: fmtBytes(c.bytes) }),
-      el('button', { class: 'danger', text: 'Stop everything', onclick: () => confirmAction('checkout.stop', c) }))));
+  const total = s.reclaim.reduce((a, c) => a + c.bytes, 0);
+  $('reclaim-sub').textContent = (tight ? 'memory is tight · ' : '') + `${fmtBytes(total)} across ${s.reclaim.length}, best first`;
+  const row = (c) => el('div', { class: 'cand' },
+    el('span', { class: 'name' }, el('b', { text: c.display.split('/').pop() }), c.branch ? el('span', { class: 'branch', text: c.branch }) : null),
+    el('span', { class: 'muted reason', text: c.reasons.join(' · ') }),
+    el('span', { class: 'bytes', text: fmtBytes(c.bytes) }),
+    el('button', { class: 'danger quiet', text: 'Stop everything', onclick: () => confirmAction('checkout.stop', c) }));
+  const top = s.reclaim.slice(0, 3), more = s.reclaim.slice(3);
+  $('reclaim-list').replaceChildren(...top.map(row),
+    more.length ? details('reclaim|more', [el('span', { text: `${more.length} more · ${fmtBytes(more.reduce((a, c) => a + c.bytes, 0))}` })], ...more.map(row)) : null);
+}
+
+// Existing checkouts keep their positions. New arrivals are appended, and vanished
+// checkouts are removed. Passing [] deliberately resets the order to current memory.
+function stableCheckoutOrder(checkouts, previous) {
+  const present = new Set(checkouts.map(co => co.path));
+  const retained = previous.filter(path => present.has(path));
+  const seen = new Set(retained);
+  const added = checkouts.filter(co => !seen.has(co.path))
+    .sort((a, b) => b.total_bytes - a.total_bytes || a.path.localeCompare(b.path));
+  return retained.concat(added.map(co => co.path));
 }
 
 function renderCheckouts(s) {
-  const root = $('checkouts');
+  const root = $('checkout-list');
+  checkoutOrder = stableCheckoutOrder(s.checkouts, checkoutOrder);
+  const byPath = new Map(s.checkouts.map(co => [co.path, co]));
+  const ordered = checkoutOrder.map(path => byPath.get(path));
   const small = (co) => !co.agents.length && !co.stacks.length && co.total_bytes < 256 * MiB;
-  const main = s.checkouts.filter(co => !small(co)), rest = s.checkouts.filter(small);
-  root.replaceChildren(el('h2', { text: 'Checkouts', }, ' ', el('span', { class: 'muted', text: 'by memory', title: 'Each checkout sums the processes whose cwd is inside it, the Herdr agents there, and the Compose stack started from it.' })),
-    ...main.map(co => card(co, false)));
+  const main = ordered.filter(co => !small(co)), rest = ordered.filter(small);
+  root.replaceChildren(...main.map(co => card(co, false)));
   const u = s.unattributed;
   if (u.processes.length || u.stacks.length) root.append(card(u, true));
-  drawCheckoutSparks();
   if (rest.length) {
-    root.append(el('details', { class: 'small-checkouts' },
-      el('summary', { class: 'muted', text: `${rest.length} small checkouts · ${fmtBytes(rest.reduce((a, c) => a + c.total_bytes, 0))}` }),
+    root.append(details('checkouts|small',
+      [el('span', { class: 'muted', text: `${rest.length} small checkouts · ${fmtBytes(rest.reduce((a, c) => a + c.total_bytes, 0))}` })],
       ...rest.map(co => card(co, false))));
   }
+  drawCheckoutSparks();
 }
+
+$('sort-checkouts').onclick = () => {
+  if (!lastState) return;
+  checkoutOrder = [];
+  renderCheckouts(lastState);
+};
 
 function renderExtras(s) {
   const vo = s.docker.volume_only || [];
@@ -406,6 +458,13 @@ function renderExtras(s) {
   $('volume-only').replaceChildren(vo.length
     ? el('span', {}, `${vo.length} Compose projects exist only as volumes (no containers): `, el('code', { text: vo.map(v => v.project + (v.volumes ? ` (${v.volumes})` : '')).join(', ') }), '. ', el('span', { text: 'compose-stack-reaper --prune-volumes removes them.' }))
     : 'no volume-only projects');
+  kv($('docker-df'), (s.docker.df || []).map(d => [`${d.type.toLowerCase().replace('local ', '')} ${d.active}/${d.total}`, fmtBytes(d.size), '', `${fmtBytes(d.reclaimable)} reclaimable`]));
+  const sumParts = [];
+  if (vo.length) sumParts.push(`${vo.length} volume-only projects`);
+  if (cacheRow && cacheRow.size) sumParts.push(`build cache ${fmtBytes(cacheRow.size)}`);
+  if (volRow) sumParts.push(`volumes ${fmtBytes(volRow.size)}`);
+  $('docker-sum').textContent = sumParts.join(' · ') || 'nothing to clean up';
+  $('ports-sum').textContent = `${s.ports.length} yours`;
   $('ports').replaceChildren(...s.ports.map(p =>
     el('div', {}, link(p.port), el('span', { text: p.name }), el('span', { class: 'cwd', text: p.cwd, title: p.cwd }))));
 }
@@ -504,8 +563,19 @@ async function history() {
     const r = await fetch('/api/history?hours=24');
     const j = await r.json();
     checkoutHistory = j.checkouts || {};
-    drawHistory(j.samples || [], lastState ? lastState.mem.total : 0);
+    lastHistory = j.samples || [];
+    drawChart();
+    drawCheckoutSparks();
   } catch (e) { /* chart is optional */ }
+}
+// The chart sits in a collapsed <details>; a hidden canvas has no size, so draw only when it is open.
+function drawChart() {
+  if (lastHistory && $('more-history').open) drawHistory(lastHistory, lastState ? lastState.mem.total : 0);
+}
+// The secondary sections remember whether you left them open.
+for (const d of document.querySelectorAll('details.more')) {
+  d.open = localStorage.getItem('devdash.open.' + d.id) === '1';
+  d.addEventListener('toggle', () => { localStorage.setItem('devdash.open.' + d.id, d.open ? '1' : '0'); if (d.id === 'more-history') drawChart(); });
 }
 
 $('notify-btn').onclick = async () => {
@@ -528,4 +598,4 @@ $('settings-btn').onclick = () => {
 tick().then(history);
 setInterval(tick, 2000);
 setInterval(history, 60000);
-window.addEventListener('resize', () => { if (lastState) renderHeader(lastState); history(); });
+window.addEventListener('resize', () => { if (lastState) renderHeader(lastState); drawChart(); });

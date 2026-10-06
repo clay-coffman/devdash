@@ -8,39 +8,29 @@
 <header id="top">
   <h1 id="host">devdash</h1>
   <span id="meta" class="muted"></span>
-  <span id="glance" class="muted"></span>
   <span id="status" class="muted"></span>
   <button id="notify-btn" title="Fire a macOS notification from this tab when memory gets tight">Notify</button>
   <button id="settings-btn" title="Notification thresholds">Thresholds</button>
 </header>
-
-<section id="reclaim" class="reclaim" hidden>
-  <h2>Reclaim <span class="muted" id="reclaim-sub"></span></h2>
-  <div id="reclaim-list"></div>
-</section>
-
-<section id="checkouts"></section>
 
 <section id="tiles" class="tiles">
   <div class="tile" id="tile-mem">
     <h2>Memory <span class="muted" id="mem-sub"></span></h2>
     <div class="big" id="mem-big">–</div>
     <div class="bar"><div id="mem-bar"></div></div>
-    <canvas id="mem-spark" height="48"></canvas>
+    <canvas id="mem-spark" height="36"></canvas>
     <div class="kv" id="mem-kv"></div>
   </div>
   <div class="tile" id="tile-cpu">
     <h2>CPU <span class="muted" id="cpu-sub"></span></h2>
     <div class="big" id="cpu-big">–</div>
     <div class="bar"><div id="cpu-bar"></div></div>
-    <canvas id="cpu-spark" height="48"></canvas>
+    <canvas id="cpu-spark" height="36"></canvas>
     <div class="kv" id="cpu-kv"></div>
   </div>
   <div class="tile" id="tile-buckets">
     <h2>Where memory goes</h2>
     <div class="kv" id="buckets-kv"></div>
-    <h2 class="sub">Docker disk</h2>
-    <div class="kv" id="docker-df"></div>
   </div>
   <div class="tile" id="tile-disk">
     <h2>Disk</h2>
@@ -48,17 +38,40 @@
   </div>
 </section>
 
-<section class="history">
-  <h2>Last 24 hours <span class="muted">one point per minute</span></h2>
-  <canvas id="history" height="140"></canvas>
-  <div class="legend muted"><i class="sw used"></i>used <i class="sw avail"></i>available <i class="sw herdr"></i>herdr cgroup <i class="sw hapi"></i>FHIR containers</div>
+<section id="reclaim" class="reclaim" hidden>
+  <h2>Safe to stop <span class="muted" id="reclaim-sub"></span></h2>
+  <div id="reclaim-list"></div>
 </section>
 
-<section id="docker-extra">
-  <h2>Docker leftovers</h2>
-  <div id="volume-only" class="muted"></div>
-  <div class="cleanup" id="cleanup"></div>
+<section id="checkouts">
+  <div class="section-head">
+    <h2>Checkouts <span class="muted">live values · fixed order</span></h2>
+    <button id="sort-checkouts" title="Reorder checkouts by current memory use, largest first">Sort by memory ↓</button>
+  </div>
+  <div id="checkout-list"></div>
 </section>
+
+<details class="more" id="more-history">
+  <summary><h2>Last 24 hours</h2><span class="muted">one point per minute</span></summary>
+  <div class="more-body">
+    <canvas id="history" height="140"></canvas>
+    <div class="legend muted"><i class="sw used"></i>used <i class="sw avail"></i>available <i class="sw herdr"></i>herdr cgroup <i class="sw hapi"></i>FHIR containers</div>
+  </div>
+</details>
+
+<details class="more" id="more-docker">
+  <summary><h2>Docker</h2><span class="muted" id="docker-sum"></span></summary>
+  <div class="more-body">
+    <div class="kv" id="docker-df"></div>
+    <p id="volume-only" class="muted"></p>
+    <div class="cleanup" id="cleanup"></div>
+  </div>
+</details>
+
+<details class="more" id="more-ports">
+  <summary><h2>Listening ports</h2><span class="muted" id="ports-sum"></span></summary>
+  <div class="more-body"><div id="ports" class="ports"></div></div>
+</details>
 
 <dialog id="logs">
   <form method="dialog">
@@ -67,11 +80,6 @@
     <menu><button type="button" id="logs-refresh">Refresh</button><button value="close">Close</button></menu>
   </form>
 </dialog>
-
-<section>
-  <h2>Listening ports <span class="muted">yours</span></h2>
-  <div id="ports" class="ports"></div>
-</section>
 
 <dialog id="confirm">
   <form method="dialog">
