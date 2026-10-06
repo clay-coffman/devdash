@@ -1,0 +1,11 @@
+live       carepilot-dev  (/home/clay-coffman/Dev/carepilot/repos/ehr)
+live       carepilot-dev-feat-iam-staff-invitations-t02a  (/home/clay-coffman/.herdr/worktrees/ehr/feat-iam-staff-invitations-t02a)
+live       carepilot-dev-feat-iam-staff-invitations-t02b  (/home/clay-coffman/.herdr/worktrees/ehr/feat-iam-staff-invitations-t02b)
+live       carepilot-dev-ibx-e2e  (/home/clay-coffman/.herdr/worktrees/ehr/ibx-e2e-clay)
+live       carepilot-dev-lum-1818  (/home/clay-coffman/.herdr/worktrees/ehr/feat-lum-1818-reseed-rehearse-undo)
+live       carepilot-pmr-lead  (/home/clay-coffman/.herdr/worktrees/ehr/feat-patient-messaging-rail)
+live       cp-admin-ui-audit  (/home/clay-coffman/.herdr/worktrees/ehr/feat-admin-ui-audit-operator-console)
+live       cp-onb-lead  (/home/clay-coffman/.herdr/worktrees/ehr/chore-customer-onboarding-plan)
+live       ibx-lead  (/home/clay-coffman/.herdr/worktrees/ehr/feat-ibx-inbox-operational-spine)
+volumes    11 project(s) exist only as volumes; --prune-volumes removes them: carepilot-dev-fix-lum-1837-redact-exception-log carepilot-ips-lead carepilot-pmr-feedback carepilot-pmr-identity carepilot-pmr-rail carepilot-prb-int carepilot-verify461-cb4e41 cp-onb-profile junction-main-merge junction-r2-creds junction-r2-recovery
+dry run; add --apply to act

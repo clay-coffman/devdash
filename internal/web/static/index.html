@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>devdash</title>
+<link rel="stylesheet" href="/static/style.css">
+<body>
+<header id="top">
+  <h1 id="host">devdash</h1>
+  <span id="meta" class="muted"></span>
+  <span id="glance" class="muted"></span>
+  <span id="status" class="muted"></span>
+  <button id="notify-btn" title="Fire a macOS notification from this tab when memory gets tight">Notify</button>
+  <button id="settings-btn" title="Thresholds">⚙</button>
+</header>
+
+<section id="reclaim" class="reclaim" hidden>
+  <h2>Reclaim <span class="muted" id="reclaim-sub"></span></h2>
+  <div id="reclaim-list"></div>
+</section>
+
+<section id="checkouts"></section>
+
+<section id="tiles" class="tiles">
+  <div class="tile" id="tile-mem">
+    <h2>Memory <span class="muted" id="mem-sub"></span></h2>
+    <div class="big" id="mem-big">–</div>
+    <div class="bar"><div id="mem-bar"></div></div>
+    <canvas id="mem-spark" height="48"></canvas>
+    <div class="kv" id="mem-kv"></div>
+  </div>
+  <div class="tile" id="tile-cpu">
+    <h2>CPU <span class="muted" id="cpu-sub"></span></h2>
+    <div class="big" id="cpu-big">–</div>
+    <div class="bar"><div id="cpu-bar"></div></div>
+    <canvas id="cpu-spark" height="48"></canvas>
+    <div class="kv" id="cpu-kv"></div>
+  </div>
+  <div class="tile" id="tile-buckets">
+    <h2>Where memory goes</h2>
+    <div class="kv" id="buckets-kv"></div>
+  </div>
+  <div class="tile" id="tile-disk">
+    <h2>Disk</h2>
+    <div id="disk-list"></div>
+    <div class="kv" id="docker-df"></div>
+  </div>
+</section>
+
+<section class="history">
+  <h2>Last 24 hours <span class="muted">from devbox-mem-sample, one point per minute</span></h2>
+  <canvas id="history" height="140"></canvas>
+  <div class="legend muted"><i class="sw used"></i>used <i class="sw avail"></i>available <i class="sw herdr"></i>herdr cgroup <i class="sw hapi"></i>FHIR containers</div>
+</section>
+
+<section id="docker-extra">
+  <h2>Docker leftovers</h2>
+  <div id="volume-only" class="muted"></div>
+  <div class="cleanup" id="cleanup"></div>
+</section>
+
+<dialog id="logs">
+  <form method="dialog">
+    <h3 id="logs-title"></h3>
+    <pre id="logs-body"></pre>
+    <menu><button type="button" id="logs-refresh">Refresh</button><button value="close">Close</button></menu>
+  </form>
+</dialog>
+
+<section>
+  <h2>All listening ports <span class="muted">processes you own</span></h2>
+  <div id="ports" class="ports"></div>
+</section>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h3 id="confirm-title"></h3>
+    <p id="confirm-body"></p>
+    <label id="confirm-volumes-row"><input type="checkbox" id="confirm-volumes"> also remove volumes (<code>down -v</code>: database contents are lost)</label>
+    <p id="confirm-warn" class="warn"></p>
+    <menu>
+      <button value="cancel">Cancel</button>
+      <button value="ok" id="confirm-ok" class="danger">Confirm</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="settings">
+  <form method="dialog">
+    <h3>Alert thresholds</h3>
+    <p class="muted">Stored in this browser. A notification fires when any threshold is crossed, at most once every ten minutes.</p>
+    <label>available memory below <input type="number" id="set-avail" min="0.5" step="0.5" style="width:4.5em"> GiB</label>
+    <label>forecast reaches that in under <input type="number" id="set-eta" min="1" step="1" style="width:4.5em"> minutes</label>
+    <label>memory pressure (some, 10s) above <input type="number" id="set-psi" min="0" step="1" style="width:4.5em"> %</label>
+    <menu><button value="cancel">Cancel</button><button value="ok">Save</button></menu>
+  </form>
+</dialog>
+
+<div id="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

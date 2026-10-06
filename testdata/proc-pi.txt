@@ -1,0 +1,68 @@
+Name:	pi
+Umask:	0002
+State:	S (sleeping)
+Tgid:	440071
+Ngid:	0
+Pid:	440071
+PPid:	438126
+TracerPid:	0
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000
+FDSize:	64
+Groups:	986 1000 
+NStgid:	440071
+NSpid:	440071
+NSpgid:	440071
+NSsid:	438126
+Kthread:	0
+VmPeak:	27810176 kB
+VmSize:	27280032 kB
+VmLck:	       0 kB
+VmPin:	       0 kB
+VmHWM:	  871836 kB
+VmRSS:	  451692 kB
+RssAnon:	  401084 kB
+RssFile:	   50608 kB
+RssShmem:	       0 kB
+VmData:	 1086872 kB
+VmStk:	     140 kB
+VmExe:	   41744 kB
+VmLib:	    5940 kB
+VmPTE:	    8616 kB
+VmSwap:	       0 kB
+HugetlbPages:	       0 kB
+CoreDumping:	0
+THP_enabled:	1
+untag_mask:	0xffffffffffffffff
+Threads:	11
+SigQ:	1/232956
+SigPnd:	0000000000000000
+ShdPnd:	0000000000000000
+SigBlk:	0000000000000000
+SigIgn:	0000000000001000
+SigCgt:	000000017b80ee37
+CapInh:	0000000800000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	000001ffffffffff
+CapAmb:	0000000000000000
+NoNewPrivs:	0
+Seccomp:	0
+Seccomp_filters:	0
+Speculation_Store_Bypass:	thread vulnerable
+SpeculationIndirectBranch:	conditional enabled
+Cpus_allowed:	ffff
+Cpus_allowed_list:	0-15
+Mems_allowed:	00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000001
+Mems_allowed_list:	0
+voluntary_ctxt_switches:	1234816
+nonvoluntary_ctxt_switches:	844143
+x86_Thread_features:	
+x86_Thread_features_locked:	
+---
+pi                                                                                                                                                                                                                             
+/home/clay-coffman/Dev/carepilot/repos/ehr
+---
+440071 (pi) S 438126 440071 438126 34816 440071 4194304 7570273 3543111 0 16 495192 5797 8499 3170 20 0 11 0 85865826 27934752768 113034 18446744073709551615 7589888 50333345 140731123024288 0 0 0 0 4096 2072047159 0 0 0 17 15 0 0 0 0 0 109655528 109844416 1034457088 140731123030640 140731123030863 140731123030863 140731123040180 0
+---
+lrwx------+1 clay-coffman clay-coffman 64 Oct  5 17:59 25 -> socket:[412628400]

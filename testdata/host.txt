@@ -1,0 +1,11 @@
+Filesystem     1024-blocks     Used Available Capacity Mounted on
+/dev/root        202218608 75155924 127046300      38% /
+/dev/root        202218608 75155924 127046300      38% /
+tmpfs             32212284  3514860  28697424      11% /tmp
+---
+899519.40 11200620.92
+ip-10-42-7-137
+16
+---
+herdr 0.9.3
+Docker Compose version v5.5.1
