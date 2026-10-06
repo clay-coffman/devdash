@@ -73,7 +73,7 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 function kv(container, rows) {
-  container.replaceChildren(...rows.flatMap(([k, v, cls]) => [el('b', { text: k }), el('span', { text: v, class: cls || '' })]));
+  container.replaceChildren(...rows.flatMap(([k, v, cls, title]) => [el('b', { text: k, title: title || '' }), el('span', { text: v, class: cls || '', title: title || '' })]));
 }
 function shortCmd(cmd) {
   return cmd.replace(/(^| )\/\S*\/([^ \/]+\/[^ \/]+)/g, '$1$2');
@@ -91,7 +91,7 @@ function spark(canvas, points, max, color, fill) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   if (points.length < 2) return;
-  const n = 300; // fixed 10-minute window at 2s
+  const n = Math.max(points.length, 60); // at least a two-minute window at 2 s per point
   const x = (i) => w - (points.length - 1 - i) * (w / (n - 1));
   const y = (v) => h - 1 - (Math.min(v, max) / max) * (h - 2);
   ctx.beginPath();
@@ -142,7 +142,7 @@ function drawHistory(samples, total) {
 // ---- rendering ------------------------------------------------------------
 function renderHeader(s) {
   $('host').textContent = s.host;
-  $('meta').textContent = `up ${fmtDur(s.uptime)} · ${s.cores} cores · ${s.counts.agents} agents (${s.counts.working} working) · ${s.counts.stacks} stacks · ${s.counts.containers} containers · ${s.counts.processes} processes`;
+  $('meta').textContent = `up ${fmtDur(s.uptime)} · ${s.counts.agents} agents, ${s.counts.working} working · ${s.counts.stacks} stacks · ${s.counts.containers} containers`;
   const etaMin = forecast(s.live, settings.availGiB * GiB);
   const etaText = etaMin == null ? '' : etaMin < 60 ? ` · ≈${Math.max(0, Math.round(etaMin))} min to ${settings.availGiB} GiB free at this rate` : '';
   $('glance').textContent = `mem ${fmtBytes(s.mem.used)} used · ${fmtBytes(s.mem.available)} free · cpu ${s.cpu.percent.toFixed(0)}%${etaText}`;
@@ -163,37 +163,38 @@ function renderHeader(s) {
   kv($('mem-kv'), [
     ['available', `${fmtBytes(m.available)} (${availP.toFixed(0)}%)`, memLevel],
     ['buffers + cache', fmtBytes(m.buffers + m.cached)],
-    ['memory pressure (some, 10s / 60s)', `${(psi.Some10 || 0).toFixed(1)}% / ${(psi.Some60 || 0).toFixed(1)}%`, level(psi.Some10 || 0, 5, 20)],
-    ['memory pressure (full, 10s)', `${(psi.Full10 || 0).toFixed(1)}%`, level(psi.Full10 || 0, 1, 5)],
-    ['forecast (5-minute trend)', etaMin == null ? 'not falling' : etaMin < 240 ? `≈${Math.max(0, Math.round(etaMin))} min to ${settings.availGiB} GiB free` : 'falling slowly', etaMin == null ? '' : etaMin < settings.etaMin ? 'bad' : etaMin < 60 ? 'warn' : ''],
+    ['pressure, some 10s / 60s', `${(psi.Some10 || 0).toFixed(1)}% / ${(psi.Some60 || 0).toFixed(1)}%`, level(psi.Some10 || 0, 5, 20)],
+    ['pressure, full 10s', `${(psi.Full10 || 0).toFixed(1)}%`, level(psi.Full10 || 0, 1, 5)],
+    ['forecast', etaMin == null ? 'not falling' : etaMin < 240 ? `≈${Math.max(0, Math.round(etaMin))} min to ${settings.availGiB} GiB` : 'falling slowly', etaMin == null ? '' : etaMin < settings.etaMin ? 'bad' : etaMin < 60 ? 'warn' : ''],
   ]);
-  spark($('mem-spark'), s.live.map(p => p.used), m.total, '#d64545', true);
+  spark($('mem-spark'), s.live.map(p => p.used), m.total, '#d64545', false);
 
   const c = s.cpu, loadP = pct(c.load.One, s.cores);
   $('cpu-big').textContent = c.percent.toFixed(0) + '%';
   $('cpu-sub').textContent = `load ${c.load.One.toFixed(1)} / ${c.load.Five.toFixed(1)} / ${c.load.Fifteen.toFixed(1)}`;
   const cb = $('cpu-bar'); cb.style.width = Math.min(c.percent, 100).toFixed(1) + '%'; cb.className = level(c.percent, 80, 95);
   kv($('cpu-kv'), [
-    ['load₁ vs cores', `${loadP.toFixed(0)}%`, level(loadP, 100, 200)],
-    ['cpu pressure (some, 10s / 60s)', `${(c.psi.Some10 || 0).toFixed(0)}% / ${(c.psi.Some60 || 0).toFixed(0)}%`, level(c.psi.Some10 || 0, 30, 60)],
+    ['load₁ vs ' + s.cores + ' cores', `${loadP.toFixed(0)}%`, level(loadP, 100, 200)],
+    ['pressure, some 10s / 60s', `${(c.psi.Some10 || 0).toFixed(0)}% / ${(c.psi.Some60 || 0).toFixed(0)}%`, level(c.psi.Some10 || 0, 30, 60)],
     ['runnable / threads', `${c.load.Running} / ${c.load.Threads}`],
   ]);
   spark($('cpu-spark'), s.live.map(p => p.cpu), 100, '#3b82f6', true);
 
   const b = s.buckets;
   kv($('buckets-kv'), [
-    ['herdr cgroup (agents + what they ran)', fmtBytes(b.herdr_cgroup)],
+    ['herdr cgroup', fmtBytes(b.herdr_cgroup), '', 'agents and everything they started'],
     ['docker containers', fmtBytes(b.containers)],
-    ['your processes (RSS sum)', fmtBytes(b.own_processes)],
-    ['checkouts with memory', String(s.checkouts.length)],
+    ['your processes', fmtBytes(b.own_processes), '', 'RSS sum; shared pages counted more than once'],
+    ['checkouts', String(s.checkouts.length)],
   ]);
+  const dfRows = (s.docker.df || []).map(d => [`docker ${d.type.toLowerCase().replace('local ', '')} ${d.active}/${d.total}`, `${fmtBytes(d.size)}`, '', `${fmtBytes(d.reclaimable)} reclaimable`]);
+  kv($('docker-df'), dfRows);
 
   $('disk-list').replaceChildren(...s.disks.map(d => {
     const p = pct(d.used, d.total);
     return el('div', {}, el('div', { class: 'kv' }, el('b', { text: d.mount }), el('span', { text: `${fmtBytes(d.used)} / ${fmtBytes(d.total)} (${p.toFixed(0)}%)`, class: level(p, 80, 90) })),
       el('div', { class: 'bar' }, el('div', { style: `width:${p}%`, class: level(p, 80, 90) })));
   }));
-  kv($('docker-df'), (s.docker.df || []).map(d => [`docker ${d.type.toLowerCase()} (${d.active}/${d.total})`, `${fmtBytes(d.size)}, ${fmtBytes(d.reclaimable)} reclaimable`]));
 }
 
 function processTable(allProcs, ownCard) {
@@ -271,77 +272,95 @@ function growthBadge(co) {
   if (!ref) ref = h[0];
   const ageMin = Math.max(1, Math.round((Date.now() - Date.parse(ref.t)) / 60e3));
   const d = co.total_bytes - ref.bytes;
+  if (Math.abs(d) < 64 * MiB) return null; // flat: say nothing
   const perHour = d * 60 / ageMin;
-  const sign = d >= 0 ? '+' : '−';
-  const span = ageMin >= 55 && ageMin <= 65 ? '1 h' : `${ageMin} min`;
-  return el('span', { class: 'growth ' + (perHour > 512 * MiB ? 'bad' : perHour > 128 * MiB ? 'warn' : ''), text: `${sign}${fmtBytes(Math.abs(d))} / ${span}`, title: 'change in total memory since the earliest sample within the last hour' });
+  const span = ageMin >= 55 ? 'in the last hour' : `in ${ageMin} min`;
+  return el('span', { class: 'growth ' + (perHour > GiB ? 'bad' : perHour > 256 * MiB ? 'warn' : ''),
+    text: `${d >= 0 ? '+' : '−'}${fmtBytes(Math.abs(d))} ${span}` });
 }
 
 function drawCheckoutSparks() {
   for (const canvas of document.querySelectorAll('canvas.co-spark')) {
     const h = checkoutHistory[canvas.dataset.path];
-    if (!h || h.length < 2) { canvas.hidden = true; continue; }
+    if (!h || h.length < 3) { canvas.hidden = true; continue; }
     canvas.hidden = false;
-    const dpr = window.devicePixelRatio || 1, w = 120, ht = 22;
+    const dpr = window.devicePixelRatio || 1, w = 96, ht = 20;
     canvas.width = w * dpr; canvas.height = ht * dpr;
     const ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const t0 = Date.now() - 24 * 3600e3, t1 = Date.now();
-    const max = Math.max(...h.map(p => p.bytes), 1);
+    const t1 = Date.now(), t0 = Math.min(Date.parse(h[0].t), t1 - 3600e3); // data span, at least one hour
+    canvas.title = `last ${fmtDur((t1 - t0) / 1000)}`;
+    const vals = h.map(p => p.bytes), lo = Math.min(...vals), hi = Math.max(...vals);
+    const span = Math.max(hi - lo, 256 * MiB); // never zoom into noise
+    const mid = (hi + lo) / 2;
+    const y = (v) => ht / 2 - ((v - mid) / span) * (ht - 4);
     ctx.beginPath();
     h.forEach((p, i) => {
-      const x = Math.max(0, (Date.parse(p.t) - t0) / (t1 - t0)) * w, y = ht - 1 - (p.bytes / max) * (ht - 2);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      const x = Math.max(0, (Date.parse(p.t) - t0) / (t1 - t0)) * w;
+      i ? ctx.lineTo(x, y(p.bytes)) : ctx.moveTo(x, y(p.bytes));
     });
     ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.2; ctx.stroke();
   }
 }
 
+function verdictPill(co) {
+  const r = co.reclaim;
+  if (!r) return null;
+  const sc = r.score;
+  const cls = sc >= 70 ? 'v-high' : sc >= 40 ? 'v-mid' : sc > 0 ? 'v-low' : 'v-never';
+  const label = sc >= 70 ? 'stoppable' : sc >= 40 ? 'probably stoppable' : sc > 0 ? 'ask first' : 'in use';
+  return el('span', { class: 'pill ' + cls, title: `reclaim score ${sc}`, text: `${label} · ${r.reasons.join(' · ')}` });
+}
+
 function card(co, unattributed) {
   const c = el('div', { class: 'card' + (unattributed ? ' unattributed' : '') });
-  // Web apps get a View button; other listening ports are listed quietly.
-  const views = [], others = [];
+  // Web apps get a View button; other listening ports are grouped by app name.
+  const views = [], others = new Map();
   for (const p of co.processes) {
     if (!p.ports || !p.ports.length) continue;
-    let rel = co.path && p.cwd.startsWith(co.path) ? p.cwd.slice(co.path.length).replace(/^\//, '') : '';
+    const rel = co.path && p.cwd.startsWith(co.path) ? p.cwd.slice(co.path.length).replace(/^\//, '') : '';
     const label = (rel.split('/').pop() || p.name);
     for (const port of p.ports) {
       if (!unattributed && isWebApp(p, rel)) views.push({ port, label });
-      else others.push({ port, label });
+      else others.set(label, [...(others.get(label) || []), port]);
     }
   }
-  const head = el('div', { class: 'card-head' },
+  const stackBytes = co.stacks.reduce((a, s) => a + s.bytes, 0);
+  c.append(el('div', { class: 'card-head' },
     el('h3', { text: unattributed ? 'Unattributed' : co.display.split('/').pop() }),
     co.branch ? el('span', { class: 'branch', text: co.branch }) : null,
-    el('span', { class: 'views' },
-      ...views.map(v => el('a', { class: 'view', href: `http://localhost:${v.port}/`, target: '_blank', rel: 'noopener' }, 'View ' + v.label + ' ', el('span', { class: 'port', text: ':' + v.port }))),
-      ...others.map(v => el('span', { class: 'otherport', title: v.label }, link(v.port), ' ' + v.label))),
+    ...views.map(v => el('a', { class: 'view', href: `http://localhost:${v.port}/`, target: '_blank', rel: 'noopener' }, v.label + ' ', el('span', { class: 'port', text: ':' + v.port }))),
     el('span', { class: 'right' },
       growthBadge(co),
-      unattributed ? null : el('canvas', { class: 'co-spark', 'data-path': co.path, width: 120, height: 22, title: 'last 24 hours' }),
-      el('span', { class: 'total', text: fmtBytes(co.total_bytes) })),
-    el('span', { class: 'path', text: unattributed ? 'processes and stacks outside any git checkout' : co.display }),
-    !unattributed && co.reclaim ? el('span', { class: 'verdict score-' + (co.reclaim.score >= 70 ? 'high' : co.reclaim.score >= 40 ? 'mid' : co.reclaim.score > 0 ? 'low' : 'never'),
-      text: (co.reclaim.score ? 'reclaim ' + co.reclaim.score : 'keep') + ' · ' + co.reclaim.reasons.join(' · ') }) : null);
-  c.append(head);
+      unattributed ? null : el('canvas', { class: 'co-spark', 'data-path': co.path, width: 96, height: 20, title: 'last 24 hours' }),
+      el('span', { class: 'total', text: fmtBytes(co.total_bytes) }))));
+  const meta = el('div', { class: 'card-meta' },
+    el('span', { class: 'path', text: unattributed ? 'outside any git checkout' : co.display }));
+  for (const [label, ports] of others) {
+    meta.append(el('span', { class: 'portgroup' }, label + ' ', ...ports.flatMap((port, i) => [i ? ' ' : null, link(port)])));
+  }
+  if (!unattributed) meta.append(verdictPill(co));
+  c.append(meta);
   if (co.agents.length) {
     c.append(el('div', { class: 'agents' }, ...co.agents.map(a =>
       el('span', { class: 'agent ' + a.status, text: `${a.name || a.title || 'agent'} · ${a.status}${a.pr ? ' · ' + a.pr : ''}`, title: [a.group, a.title, a.context].filter(Boolean).join('\n') }))));
   }
+  const folds = el('div', { class: 'folds' });
   if (co.processes.length) {
-    c.append(details(co.path + '|procs',
-      [el('b', { text: `${co.processes.length} processes` }), el('span', { class: 'muted', text: ' · ' + fmtBytes(co.proc_bytes) })],
+    folds.append(details(co.path + '|procs',
+      [el('b', { text: `${co.processes.length} processes` }), el('span', { class: 'muted', text: fmtBytes(co.proc_bytes) })],
       processTable(co.processes, co)));
   }
   for (const st of co.stacks) {
-    const summary = [el('b', { text: st.project }), ' ',
-      el('span', { class: 'badge ' + st.class, text: st.class }), ' ',
-      el('span', { class: 'muted', text: `${st.running}/${st.containers.length} running · ${fmtBytes(st.bytes)}${st.volumes ? ` · ${st.volumes} volumes` : ''}` })];
+    const summary = [el('b', { text: st.project }),
+      el('span', { class: 'badge ' + st.class, text: st.class }),
+      el('span', { class: 'muted', text: `${st.running}/${st.containers.length} running · ${fmtBytes(st.bytes)}${st.volumes ? ` · ${st.volumes} vol` : ''}` })];
     if (st.class !== 'foreign') {
       summary.push(el('button', { class: 'danger stop-stack', text: 'Stop stack',
         onclick: (e) => { e.preventDefault(); confirmAction('stack.down', st, co); } }));
     }
-    c.append(details(co.path + '|stack|' + st.project, summary, containerTable(st)));
+    folds.append(details(co.path + '|stack|' + st.project, summary, containerTable(st)));
   }
+  if (folds.childElementCount) c.append(folds);
   return c;
 }
 
@@ -350,12 +369,11 @@ function renderReclaim(s) {
   const tight = pct(s.mem.available, s.mem.total) < 15 || (s.mem.psi.Some10 || 0) > 5;
   sec.hidden = !s.reclaim.length;
   sec.classList.toggle('tight', tight);
-  $('reclaim-sub').textContent = tight ? 'memory is tight: these are the safest things to stop, best first' : 'safest things to stop if memory gets tight, best first';
+  $('reclaim-sub').textContent = tight ? 'memory is tight' : 'safest to stop, best first';
   $('reclaim-list').replaceChildren(...s.reclaim.map(c =>
     el('div', { class: 'cand' },
-      el('b', { text: c.display.split('/').pop() }),
-      c.branch ? el('span', { class: 'branch', text: c.branch }) : null,
-      el('span', { class: 'muted', text: c.reasons.join(' · ') }),
+      el('span', { class: 'name' }, el('b', { text: c.display.split('/').pop() }), c.branch ? el('span', { class: 'branch', text: c.branch }) : null),
+      el('span', { class: 'muted reason', text: c.reasons.join(' · ') }),
       el('span', { class: 'bytes', text: fmtBytes(c.bytes) }),
       el('button', { class: 'danger', text: 'Stop everything', onclick: () => confirmAction('checkout.stop', c) }))));
 }
@@ -364,14 +382,14 @@ function renderCheckouts(s) {
   const root = $('checkouts');
   const small = (co) => !co.agents.length && !co.stacks.length && co.total_bytes < 256 * MiB;
   const main = s.checkouts.filter(co => !small(co)), rest = s.checkouts.filter(small);
-  root.replaceChildren(el('h2', { text: 'Checkouts', }, ' ', el('span', { class: 'muted', text: 'sorted by memory: processes with their cwd inside, Herdr agents there, and the Compose stack started from it' })),
+  root.replaceChildren(el('h2', { text: 'Checkouts', }, ' ', el('span', { class: 'muted', text: 'by memory', title: 'Each checkout sums the processes whose cwd is inside it, the Herdr agents there, and the Compose stack started from it.' })),
     ...main.map(co => card(co, false)));
   const u = s.unattributed;
   if (u.processes.length || u.stacks.length) root.append(card(u, true));
   drawCheckoutSparks();
   if (rest.length) {
     root.append(el('details', { class: 'small-checkouts' },
-      el('summary', { class: 'muted', text: `${rest.length} small checkouts (no agents, no stack, under 256 MiB): ${fmtBytes(rest.reduce((a, c) => a + c.total_bytes, 0))}` }),
+      el('summary', { class: 'muted', text: `${rest.length} small checkouts · ${fmtBytes(rest.reduce((a, c) => a + c.total_bytes, 0))}` }),
       ...rest.map(co => card(co, false))));
   }
 }

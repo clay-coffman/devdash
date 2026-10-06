@@ -162,7 +162,7 @@ func TestScoreReclaim(t *testing.T) {
 		{Path: "/a", TotalBytes: 1 << 30, Reclaim: Reclaim{Score: 40}},
 		{Path: "/b", TotalBytes: 2 << 30, Reclaim: Reclaim{Score: 80}},
 		{Path: "/c", TotalBytes: 3 << 30, Reclaim: Reclaim{Score: 0}},
-		{Path: "/d", TotalBytes: 1 << 20, Reclaim: Reclaim{Score: 100}},
+		{Path: "/d", TotalBytes: 300 << 20, Reclaim: Reclaim{Score: 100}},
 		{Path: "/e", TotalBytes: 3 << 30, Reclaim: Reclaim{Score: 40}},
 	})
 	if len(cands) != 3 || cands[0].Path != "/b" || cands[1].Path != "/e" || cands[2].Path != "/a" {

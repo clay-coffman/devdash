@@ -611,7 +611,7 @@ func scoreReclaim(co *Checkout) Reclaim {
 func candidates(cos []Checkout) []Candidate {
 	out := []Candidate{}
 	for _, co := range cos {
-		if co.Reclaim.Score == 0 || co.TotalBytes < 128<<20 {
+		if co.Reclaim.Score == 0 || co.TotalBytes < 512<<20 {
 			continue
 		}
 		out = append(out, Candidate{Path: co.Path, Display: co.Display, Branch: co.Branch, Bytes: co.TotalBytes, Score: co.Reclaim.Score, Reasons: co.Reclaim.Reasons})
