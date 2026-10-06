@@ -109,21 +109,21 @@ the host series.
 
 ## Steps
 
-- [ ] 1. A2 sampler + history merge, per-checkout log; tests on the log
+- [x] 1. A2 sampler + history merge, per-checkout log; tests on the log
       round-trip.
-- [ ] 2. B1 reclaim score in `state`, with table-driven tests; the
+- [x] 2. B1 reclaim score in `state`, with table-driven tests; the
       `checkout.stop` action; the Reclaim strip.
-- [ ] 3. B3 per-checkout history endpoint and card sparklines/deltas.
-- [ ] 4. B2 forecast, Notify button, settings popover.
-- [ ] 5. B4: PR chips, logs drawer, docker cleanup actions.
-- [ ] 6. A1 subcommands: `install-service`, `open`, `setup`, `version`.
+- [x] 3. B3 per-checkout history endpoint and card sparklines/deltas.
+- [x] 4. B2 forecast, Notify button, settings popover.
+- [x] 5. B4: PR chips, logs drawer, docker cleanup actions.
+- [x] 6. A1 subcommands: `install-service`, `open`, `setup`, `version`.
       Port the `remote-chrome` launcher logic to Go (`open`), test on
       this Air against clay-aws-devbox with its own tunnel port.
-- [ ] 7. A3: `install.sh`, Actions workflow, README, LICENSE; `git init`,
+- [x] 7. A3: `install.sh`, Actions workflow, README, LICENSE; `git init`,
       create the public repo with `gh`, push, tag `v0.1.0`, verify the
       release has four binaries plus checksums; run `install.sh` here and
       on the devbox from the real release.
-- [ ] 8. Replace the transient unit on clay-aws-devbox with
+- [x] 8. Replace the transient unit on clay-aws-devbox with
       `devdash install-service` from the released binary; verify after
       `systemctl --user restart`; verify `devdash setup clay-aws-devbox`
       from the Air end to end as the coworker would run it.
