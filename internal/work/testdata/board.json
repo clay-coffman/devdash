@@ -1,0 +1,23 @@
+{
+  "workstreams": [
+    {
+      "id": "alpha", "name": "Navigation <script>bad()</script>", "repo": "/projects/atlas", "source": "/projects/atlas/.fleet/workstreams.json", "source_mode": "catalog", "modified_at": "2026-01-01T12:00:00Z", "stage": "Working", "next": "Follow task", "warning": "Supplied warning", "panes": ["w1:p1"], "needs": "",
+      "derived": {"version": 1, "catalog_revision": 3, "intent": "active", "decision": {"at": "2026-01-01T11:00:00Z", "actor": "private actor", "reason": "Approved", "reference": "#20"}, "section": "Now", "reasons": ["Supplied facts"], "runtime_known": true, "runtime_observed_at": "2026-01-01T12:00:00Z", "fact_max_age": "5m", "tasks": [
+        {"id": "TASK-1", "intent": "active", "pr_references": ["org/atlas#20"], "checkouts": [
+          {"path": "/projects/atlas-nav", "expected_branch": "feature/nav", "status": "dirty", "observed_at": "2026-01-01T12:00:00Z", "registered_plan": "/projects/atlas-nav/.fleet/task-1/plan.md", "registered_brief": "private brief", "git": {"branch": "feature/nav", "status_known": true, "dirty_files": 2}, "plan": {"path": "/projects/atlas-nav/.fleet/task-1/plan.md", "done": 2, "open": 1, "blocked": 0, "plan_age_min": 3}},
+          {"path": "/projects/atlas-lane", "expected_branch": "feature/lane", "status": "absent", "observed_at": "2026-01-01T12:00:00Z", "head_covered_by_merged_pr": false}
+        ]}
+      ]},
+      "prs": [{"reference": "org/atlas#20", "number": 20, "state": "OPEN", "isDraft": true, "reviewDecision": "REVIEW_REQUIRED", "observed_at": "2026-01-01T11:59:00Z", "repository": "org/atlas", "title": "Navigation", "url": "https://github.com/org/atlas/pull/20", "checks": {"total": 2, "passing": 1, "pending": 1, "failing": 0, "awaiting_approval": 0, "running": [{"name": "test", "state": "IN_PROGRESS", "url": "javascript:bad()"}]}, "merge_queue": {"position": 2, "state": "QUEUED", "enqueued_at": "2026-01-01T11:50:00Z", "eta_seconds": 60}}]
+    },
+    {"name": "Legacy upgrade", "repo": "/projects/beacon", "source": "/projects/beacon/.fleet/workstreams.md", "source_mode": "legacy", "stage": "Planning", "panes": [], "warning": "Legacy source"},
+    {"name": "Unfiled", "repo": "", "source": "", "panes": ["w2:p1"], "working": 1},
+    {"id": "future", "name": "Future projection", "repo": "/projects/beacon", "source": "/projects/beacon/.fleet/workstreams.json", "source_mode": "catalog", "derived": {"version": 99, "section": "Parked", "tasks": [{"id": "untrusted"}]} }
+  ],
+  "sweep": {"at": "2026-01-01T12:00:00Z", "agents": 2, "key_source": "PRIVATE CONFIG", "cleanup_candidates": 5},
+  "agents": [
+    {"observation": {"agent_name": "nav-build", "pane": "w1:p1", "workspace": "w1", "workspace_label": "Atlas navigation", "cwd": "/projects/atlas-nav", "repository": "/projects/atlas", "checkout": "/projects/atlas-nav", "task_id": "TASK-1", "workstream_id": "alpha", "herdr_status": "working", "context_used": "40%", "provider": "example", "model_id": "builder", "plan": {"path": "/projects/atlas-nav/.fleet/task-1/plan.md", "done": 2, "open": 1, "blocked": 0}, "pr_lookup": "unknown", "last_user_message": "PRIVATE MESSAGE", "last_assistant_message": "PRIVATE ANSWER", "recent_tool_calls_oldest_first": ["PRIVATE TOOL"], "session_path": "PRIVATE SESSION", "pr_history": {"title": "PRIVATE HISTORY"}}, "assessment": {"status": "ok", "assessed_at": "2026-01-01T12:00:00Z", "model": "advisor", "waiting_on": "clay", "finished": 0.1, "stuck": 0.2, "attention_score": 0.3, "input_tokens": 999}, "meta": {"collected_at": "2026-01-01T12:00:00Z", "session_path": "PRIVATE META", "headline": "PRIVATE HEADLINE"}}
+  ],
+  "cleanup": [{"path": "PRIVATE CLEANUP", "recommendation": "stop"}],
+  "future_field": true
+}

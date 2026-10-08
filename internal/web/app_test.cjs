@@ -25,7 +25,7 @@ function app() {
       },
       querySelectorAll: () => [],
     },
-    localStorage: { getItem: () => null },
+    localStorage: { getItem: () => null, setItem() {} },
     window: { addEventListener() {} },
     fetch: () => new Promise(() => {}), // Don't start polling a real backend.
     setInterval() {},
@@ -37,6 +37,23 @@ const co = (path, bytes) => ({ path, total_bytes: bytes });
 function order(ctx, checkouts, previous = []) {
   return Array.from(ctx.stableCheckoutOrder(checkouts, previous));
 }
+
+test('memory alerts work without reclaim data and do not recommend stopping anything', () => {
+  const ctx = app();
+  const notifications = [];
+  ctx.Notification = class {
+    static permission = 'granted';
+    constructor(title, options) { notifications.push({ title, ...options }); }
+  };
+  ctx.maybeNotify({ host: 'devbox', mem: { available: 2 * 1024 ** 3, psi: {} } }, null);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].body, '2.0 GiB available.');
+});
+
+test('dashboard markup has no reclaim section', () => {
+  const html = readFileSync(`${__dirname}/static/index.html`, 'utf8');
+  assert.doesNotMatch(html, /id="reclaim"|Safe to stop|Stop everything/);
+});
 
 test('initial order is largest first, with deterministic ties', () => {
   assert.deepEqual(order(app(), [co('b', 1), co('c', 2), co('a', 1)]), ['c', 'a', 'b']);
@@ -99,11 +116,20 @@ test('app links visibly say Open and announce the new tab', () => {
   assert.ok(!resources.open);
 });
 
+test('shared app extraction uses an exact checkout boundary and observed valid unique ports', () => {
+  const ctx=app(),co={path:'/repo',processes:[
+    {name:'node',cmd:'vite',cwd:'/repo/web',ports:[5173,5173,0,70000]},
+    {name:'node',cmd:'vite',cwd:'/repo-neighbor/web',ports:[8080]},
+    {name:'node',cmd:'next dev',cwd:'/repo/admin-web',ports:[3000]},
+  ]};
+  const {views,others}=ctx.checkoutApps(co);assert.deepEqual(Array.from(views,v=>v.port),[5173,3000]);assert.equal(others.get('node')[0],8080);
+  assert.equal(ctx.checkoutApps(co,true).views.length,0,'unattributed apps must not acquire checkout buttons');
+});
+
 test('infrastructure and agent details are grouped behind Resources, not app actions', () => {
   const ctx = app();
   const card = ctx.card({
     path: '/repo', display: '/repo', branch: 'main', total_bytes: 1, proc_bytes: 1,
-    reclaim: { score: 0, reasons: ['agent working'] },
     agents: [{ name: 'builder', status: 'working' }],
     stacks: [{ project: 'database', class: 'live', running: 0, containers: [], bytes: 0 }],
     processes: [{ name: 'api', cmd: 'server', cwd: '/repo', ports: [3000], pid: 1, rss: 1, cpu: 0 }],
@@ -113,7 +139,7 @@ test('infrastructure and agent details are grouped behind Resources, not app act
   const summary = resources.children[0];
   assert.equal(summary.tag, 'summary');
   assert.equal(summary.children[1].textContent, '1 process · 1 stack · 1 agent');
-  assert.equal(summary.children[2].className, 'resource-verdict');
+  assert.equal(summary.children.length, 2, 'only Resources and counts, no stop verdict');
   const body = resources.children[1];
   assert.equal(body.className, 'resource-body');
   assert.ok(body.children.some(c => c.className === 'resource-agents'));

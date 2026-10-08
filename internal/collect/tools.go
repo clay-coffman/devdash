@@ -3,6 +3,7 @@ package collect
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,34 +17,62 @@ import (
 
 // Agent is one row of `herdr agent list`.
 type Agent struct {
-	Name      string `json:"name"`
-	Status    string `json:"status"` // working, idle, blocked, done
-	Cwd       string `json:"cwd"`
-	Workspace string `json:"workspace"`
-	Title     string `json:"title,omitempty"`
-	Group     string `json:"group,omitempty"`
-	Context   string `json:"context,omitempty"`
-	PR        string `json:"pr,omitempty"` // e.g. "#522 ✗" as Herdr reports it
+	Name       string `json:"name"`
+	Status     string `json:"status"` // working, idle, blocked, done
+	Cwd        string `json:"cwd"`    // effective foreground location, not necessarily the pane shell cwd
+	Workspace  string `json:"workspace"`
+	Title      string `json:"title,omitempty"`
+	Group      string `json:"group,omitempty"`
+	Context    string `json:"context,omitempty"`
+	PR         string `json:"pr,omitempty"` // e.g. "#522 ✗" as Herdr reports it
+	Pane       string `json:"pane"`
+	Kind       string `json:"kind,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	Checkout   string `json:"checkout,omitempty"`
+	Repository string `json:"repository,omitempty"`
 }
 
 func ParseHerdrAgents(r io.Reader) ([]Agent, error) {
 	var doc struct {
-		Result struct {
-			Agents []struct {
-				Name        string            `json:"name"`
-				AgentStatus string            `json:"agent_status"`
-				Cwd         string            `json:"cwd"`
-				WorkspaceID string            `json:"workspace_id"`
-				Tokens      map[string]string `json:"tokens"`
+		Error  json.RawMessage `json:"error"`
+		Result *struct {
+			Agents *[]struct {
+				PaneID        string            `json:"pane_id"`
+				Kind          string            `json:"agent"`
+				Name          string            `json:"name"`
+				AgentStatus   string            `json:"agent_status"`
+				Cwd           string            `json:"cwd"`
+				ForegroundCwd string            `json:"foreground_cwd"`
+				WorkspaceID   string            `json:"workspace_id"`
+				Tokens        map[string]string `json:"tokens"`
 			} `json:"agents"`
 		} `json:"result"`
 	}
-	if err := json.NewDecoder(r).Decode(&doc); err != nil {
+	dec := json.NewDecoder(io.LimitReader(r, 8<<20+1))
+	if err := dec.Decode(&doc); err != nil {
 		return nil, err
 	}
-	out := make([]Agent, 0, len(doc.Result.Agents))
-	for _, a := range doc.Result.Agents {
-		ag := Agent{Name: a.Name, Status: a.AgentStatus, Cwd: a.Cwd, Workspace: a.WorkspaceID,
+	if doc.Result == nil || doc.Result.Agents == nil || (len(doc.Error) != 0 && string(doc.Error) != "null") {
+		return nil, fmt.Errorf("herdr response missing agent result or reports an RPC error")
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return nil, fmt.Errorf("trailing herdr response data")
+	}
+	out := make([]Agent, 0, len(*doc.Result.Agents))
+	seen := map[string]bool{}
+	for _, a := range *doc.Result.Agents {
+		if a.PaneID == "" || seen[a.PaneID] {
+			return nil, fmt.Errorf("missing or duplicate herdr pane identity")
+		}
+		seen[a.PaneID] = true
+		// Normalize location once so Work membership, fallback, repository and
+		// Resources attribution cannot disagree about the foreground agent.
+		cwd := a.ForegroundCwd
+		if cwd == "" {
+			cwd = a.Cwd
+		}
+		ag := Agent{Name: a.Name, Status: a.AgentStatus, Cwd: cwd, Workspace: a.WorkspaceID, Pane: a.PaneID, Kind: a.Kind, Provider: a.Tokens["provider"],
 			Title: a.Tokens["title"], Group: a.Tokens["hs_group"], Context: a.Tokens["context"], PR: a.Tokens["pr"]}
 		if ag.Name == "" {
 			ag.Name = strings.TrimSpace(ag.Title)
@@ -53,8 +82,10 @@ func ParseHerdrAgents(r io.Reader) ([]Agent, error) {
 	return out, nil
 }
 
-func HerdrAgents() ([]Agent, error) {
-	b, err := run(10*time.Second, "herdr", "agent", "list")
+func HerdrAgents() ([]Agent, error) { return HerdrAgentsSocket("") }
+
+func HerdrAgentsSocket(socket string) ([]Agent, error) {
+	b, err := RunBoundedSocket(10*time.Second, 8<<20, socket, "herdr", "agent", "list")
 	if err != nil {
 		return nil, err
 	}
@@ -219,10 +250,56 @@ func (g *Git) Toplevel(dir string) string {
 			break
 		}
 	}
+	if top != "" {
+		if canonical, err := filepath.EvalSymlinks(top); err == nil {
+			top = canonical
+		}
+	}
 	g.mu.Lock()
 	g.toplevel[dir] = gitEntry{top, time.Now()}
 	g.mu.Unlock()
 	return top
+}
+
+// Repository resolves Git's own worktree common-directory pointer. It does not
+// infer registration, branch ownership, or a task from a directory name. Unusual
+// separate Git directories stay unknown rather than guessing a main checkout.
+func (g *Git) Repository(top string) string {
+	if top == "" {
+		return ""
+	}
+	gitdir := filepath.Join(top, ".git")
+	st, err := os.Stat(gitdir)
+	if err != nil {
+		return ""
+	}
+	if st.IsDir() {
+		return top
+	}
+	b, err := os.ReadFile(gitdir)
+	if err != nil {
+		return ""
+	}
+	pointer := strings.TrimSpace(strings.TrimPrefix(string(b), "gitdir:"))
+	if pointer == strings.TrimSpace(string(b)) || pointer == "" {
+		return ""
+	}
+	if !filepath.IsAbs(pointer) {
+		pointer = filepath.Join(top, pointer)
+	}
+	common, err := os.ReadFile(filepath.Join(pointer, "commondir"))
+	if err != nil {
+		return ""
+	}
+	path := strings.TrimSpace(string(common))
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(pointer, path)
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil || filepath.Base(path) != ".git" {
+		return ""
+	}
+	return filepath.Dir(path)
 }
 
 // Branch returns the branch name or "detached @ <sha>".

@@ -36,6 +36,7 @@ func New(c *state.Collector) *Server {
 	s.mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 	s.mux.HandleFunc("/", s.index)
 	s.mux.HandleFunc("/api/state", s.state)
+	s.mux.HandleFunc("/api/work", s.work)
 	s.mux.HandleFunc("/api/history", s.history)
 	s.mux.HandleFunc("/api/action", s.action)
 	s.mux.HandleFunc("/api/logs", s.logs)
@@ -71,6 +72,14 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.c.Snapshot())
+}
+
+func (s *Server) work(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, s.c.WorkSnapshot())
 }
 
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {
@@ -208,39 +217,6 @@ func (s *Server) perform(ctx context.Context, req actionRequest) (string, error)
 			return "", fmt.Errorf("kill %d: %v", pid, err)
 		}
 		return fmt.Sprintf("sent %s to %d (%s)", sigName, pid, p.Name), nil
-	case "checkout.stop":
-		co, ok := s.c.FindCheckout(req.Target)
-		if !ok {
-			return "", fmt.Errorf("unknown checkout %q", req.Target)
-		}
-		if co.Working > 0 {
-			return "", fmt.Errorf("refused: %d agent(s) in %s are working", co.Working, co.Display)
-		}
-		var parts []string
-		for _, st := range co.Stacks {
-			if st.Class == "foreign" {
-				continue
-			}
-			if out, err := exec.CommandContext(ctx, "docker", "compose", "-p", st.Project, "down", "--remove-orphans").CombinedOutput(); err != nil {
-				return strings.Join(parts, "; "), fmt.Errorf("compose down %s: %v: %s", st.Project, err, tail(out))
-			}
-			parts = append(parts, "down "+st.Project)
-		}
-		killed, spared := 0, 0
-		for _, p := range co.Processes {
-			if p.Name == "pi" || p.PID == os.Getpid() {
-				spared++
-				continue
-			}
-			if err := kill(p.PID, syscall.SIGTERM); err == nil {
-				killed++
-			}
-		}
-		parts = append(parts, fmt.Sprintf("SIGTERM to %d processes", killed))
-		if spared > 0 {
-			parts = append(parts, fmt.Sprintf("%d pi agent(s) left to Herdr", spared))
-		}
-		return strings.Join(parts, "; "), nil
 	case "docker.prune_build_cache":
 		out, err := exec.CommandContext(ctx, "docker", "builder", "prune", "-f").CombinedOutput()
 		if err != nil {

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,41 +132,13 @@ func TestClassFallback(t *testing.T) {
 	}
 }
 
-func TestScoreReclaim(t *testing.T) {
-	ag := func(status string) collect.Agent { return collect.Agent{Name: "a", Status: status} }
-	cases := []struct {
-		name  string
-		co    Checkout
-		score int
-	}{
-		{"working vetoes", Checkout{Agents: []collect.Agent{ag("done"), ag("working")}, Stacks: []Stack{{Class: "orphaned"}}}, 0},
-		{"no agents", Checkout{Processes: []collect.Process{{PID: 1}}}, 70},
-		{"all done", Checkout{Agents: []collect.Agent{ag("done"), ag("done")}}, 60},
-		{"idle mix", Checkout{Agents: []collect.Agent{ag("done"), ag("idle")}}, 40},
-		{"blocked", Checkout{Agents: []collect.Agent{ag("idle"), ag("blocked")}}, 30},
-		{"detached raises idle", Checkout{Agents: []collect.Agent{ag("idle")}, Stacks: []Stack{{Class: "detached"}}}, 80},
-		{"orphaned tops", Checkout{Agents: []collect.Agent{ag("blocked")}, Stacks: []Stack{{Class: "orphaned"}}}, 100},
-		{"live stack changes nothing", Checkout{Agents: []collect.Agent{ag("done")}, Stacks: []Stack{{Class: "live"}}}, 60},
+func TestSnapshotOmitsReclaimRecommendations(t *testing.T) {
+	b, err := json.Marshal(fixtureCollector(t).Snapshot())
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		co := tc.co
-		for _, a := range co.Agents {
-			if a.Status == "working" {
-				co.Working++
-			}
-		}
-		if got := scoreReclaim(&co); got.Score != tc.score || len(got.Reasons) == 0 {
-			t.Errorf("%s: score %d reasons %v, want %d", tc.name, got.Score, got.Reasons, tc.score)
-		}
-	}
-	cands := candidates([]Checkout{
-		{Path: "/a", TotalBytes: 1 << 30, Reclaim: Reclaim{Score: 40}},
-		{Path: "/b", TotalBytes: 2 << 30, Reclaim: Reclaim{Score: 80}},
-		{Path: "/c", TotalBytes: 3 << 30, Reclaim: Reclaim{Score: 0}},
-		{Path: "/d", TotalBytes: 300 << 20, Reclaim: Reclaim{Score: 100}},
-		{Path: "/e", TotalBytes: 3 << 30, Reclaim: Reclaim{Score: 40}},
-	})
-	if len(cands) != 3 || cands[0].Path != "/b" || cands[1].Path != "/e" || cands[2].Path != "/a" {
-		t.Errorf("candidates = %+v", cands)
+	// Covers the top-level candidate list and per-checkout verdicts.
+	if strings.Contains(string(b), `"reclaim":`) {
+		t.Fatal("snapshot still exposes reclaim recommendations")
 	}
 }

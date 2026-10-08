@@ -1,5 +1,9 @@
 # devdash — plan, phase 2: share it, and make it act
 
+> Historical implementation plan. The B1 reclaim recommendations, checkout
+> verdicts, and bulk `checkout.stop` action were subsequently removed by
+> product decision. The README describes the current feature set.
+
 Phase 1 (done 2026-10-06): Go binary, live page, per-checkout attribution,
 guarded actions, running as a transient unit on clay-aws-devbox. This phase
 makes it installable by someone else in two commands and adds the features

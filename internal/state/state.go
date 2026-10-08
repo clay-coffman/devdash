@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/clay-coffman/devdash/internal/collect"
+	"github.com/clay-coffman/devdash/internal/work"
 )
 
 type Stack struct {
@@ -26,6 +27,7 @@ type Stack struct {
 
 type Checkout struct {
 	Path           string            `json:"path"`
+	Repository     string            `json:"repository,omitempty"`
 	Display        string            `json:"display"`
 	Branch         string            `json:"branch,omitempty"`
 	Agents         []collect.Agent   `json:"agents"`
@@ -35,23 +37,6 @@ type Checkout struct {
 	ContainerBytes int64             `json:"container_bytes"`
 	TotalBytes     int64             `json:"total_bytes"`
 	Working        int               `json:"working"` // agents with status working
-	Reclaim        Reclaim           `json:"reclaim"`
-}
-
-// Reclaim is the deterministic "can I stop this" verdict for a checkout.
-type Reclaim struct {
-	Score   int      `json:"score"` // 0 = never; higher = safer to stop
-	Reasons []string `json:"reasons"`
-}
-
-// Candidate is one row of the Reclaim strip.
-type Candidate struct {
-	Path    string   `json:"path"`
-	Display string   `json:"display"`
-	Branch  string   `json:"branch,omitempty"`
-	Bytes   int64    `json:"bytes"`
-	Score   int      `json:"score"`
-	Reasons []string `json:"reasons"`
 }
 
 type Port struct {
@@ -87,7 +72,6 @@ type State struct {
 
 	Checkouts    []Checkout  `json:"checkouts"`
 	Unattributed Checkout    `json:"unattributed"`
-	Reclaim      []Candidate `json:"reclaim"`
 	Docker       Docker      `json:"docker"`
 	Ports        []Port      `json:"ports"`
 	Live         []LivePoint `json:"live"`
@@ -162,6 +146,13 @@ type Collector struct {
 	df         []collect.DiskUsage
 	volumes    map[string]int
 	errs       map[string]string
+	board      work.Board // immutable typed projection; refreshed off the resource path
+	boardState work.Provider
+	herdrState work.Provider
+	route      work.Route
+	socket     string
+	readBoard  func() (work.Board, error)
+	readAgents func() ([]collect.Agent, error)
 }
 
 func New(token string) *Collector {
@@ -176,7 +167,12 @@ func New(token string) *Collector {
 		samplesLog: filepath.Join(home, ".local", "state", "devbox-mem", "samples.log"),
 		Token:      token,
 		errs:       map[string]string{},
+		boardState: work.Provider{State: "pending"},
+		herdrState: work.Provider{State: "pending"},
+		socket:     work.SocketContext(),
 	}
+	c.readBoard = func() (work.Board, error) { return work.ReadBoardSocket(c.socket) }
+	c.readAgents = func() ([]collect.Agent, error) { return collect.HerdrAgentsSocket(c.socket) }
 	return c
 }
 
@@ -200,7 +196,9 @@ func cores() int {
 // Run starts the refresh loops and blocks until stop is closed.
 func (c *Collector) Run(stop <-chan struct{}) {
 	go c.loop(stop, 5*time.Second, c.refreshDocker)
+	go c.loop(stop, 15*time.Second, c.refreshRoute)
 	go c.loop(stop, 5*time.Second, c.refreshHerdr)
+	go c.loop(stop, 15*time.Second, c.refreshBoard)
 	go c.loop(stop, 30*time.Second, c.refreshReaper)
 	go c.loop(stop, 60*time.Second, c.refreshDF)
 	go c.loop(stop, 30*time.Second, c.refreshDisks)
@@ -293,15 +291,52 @@ func (c *Collector) refreshDocker() {
 	c.mu.Unlock()
 }
 
+func (c *Collector) refreshRoute() {
+	route := work.VerifyRoute(c.socket)
+	c.mu.Lock()
+	c.route = route
+	c.mu.Unlock()
+}
+
 func (c *Collector) refreshHerdr() {
-	ags, err := collect.HerdrAgents()
+	ags, err := c.readAgents()
 	c.setErr("herdr", err)
-	if err != nil {
-		return
+	if err == nil {
+		for i := range ags {
+			top := c.git.Toplevel(ags[i].Cwd)
+			if canonical, e := filepath.EvalSymlinks(top); top != "" && e == nil {
+				top = canonical
+			}
+			ags[i].Checkout = top
+			ags[i].Repository = c.git.Repository(top)
+		}
 	}
 	c.mu.Lock()
-	c.agents = ags
+	defer c.mu.Unlock()
+	c.herdrState.Update(time.Now(), err)
+	if err == nil {
+		c.agents = ags
+	} // successful empty clears; failures retain last good
+}
+
+func (c *Collector) refreshBoard() {
+	b, err := c.readBoard()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.boardState.Update(time.Now(), err)
+	if err == nil {
+		c.board = b
+	}
+}
+
+// WorkSnapshot returns only cached data. No commands, git lookups, or board
+// refreshes run on the HTTP path, and the independent 15s loop cannot delay /api/state.
+func (c *Collector) WorkSnapshot() work.Projection {
+	c.mu.Lock()
+	b, bp, hp, route := c.board, c.boardState, c.herdrState, c.route
+	agents := append([]collect.Agent(nil), c.agents...)
 	c.mu.Unlock()
+	return work.ProjectWithRoute(b, bp, hp, agents, time.Now(), route)
 }
 
 func (c *Collector) refreshReaper() {
@@ -402,7 +437,7 @@ func (c *Collector) Snapshot() State {
 		}
 		co, ok := byPath[top]
 		if !ok {
-			co = &Checkout{Path: top, Display: c.tilde(top), Branch: c.git.Branch(top)}
+			co = &Checkout{Path: top, Repository: c.git.Repository(top), Display: c.tilde(top), Branch: c.git.Branch(top)}
 			byPath[top] = co
 		}
 		return co
@@ -471,11 +506,9 @@ func (c *Collector) Snapshot() State {
 
 	for _, co := range byPath {
 		finish(co)
-		co.Reclaim = scoreReclaim(co)
 		s.Checkouts = append(s.Checkouts, *co)
 	}
 	finish(&s.Unattributed)
-	s.Reclaim = candidates(s.Checkouts)
 	sort.Slice(s.Checkouts, func(i, j int) bool {
 		if s.Checkouts[i].TotalBytes != s.Checkouts[j].TotalBytes {
 			return s.Checkouts[i].TotalBytes > s.Checkouts[j].TotalBytes
@@ -546,96 +579,6 @@ func (c *Collector) ProjectWorkingDir(project string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// scoreReclaim applies the table from PLAN.md. Working agents veto; stack
-// classification can only raise the score.
-func scoreReclaim(co *Checkout) Reclaim {
-	r := Reclaim{Reasons: []string{}}
-	if co.Working > 0 {
-		r.Reasons = append(r.Reasons, "agent working")
-		return r
-	}
-	var blocked, done, idle, other int
-	for _, a := range co.Agents {
-		switch a.Status {
-		case "blocked":
-			blocked++
-		case "done":
-			done++
-		case "idle":
-			idle++
-		default:
-			other++
-		}
-	}
-	switch {
-	case len(co.Agents) == 0:
-		r.Score = 70
-		r.Reasons = append(r.Reasons, "no agent here")
-	case other > 0:
-		r.Reasons = append(r.Reasons, "agent in an unknown state")
-		return r
-	case blocked > 0:
-		r.Score = 30
-		r.Reasons = append(r.Reasons, "agent blocked (waiting on you)")
-	case idle == 0:
-		r.Score = 60
-		r.Reasons = append(r.Reasons, "all agents done")
-	default:
-		r.Score = 40
-		r.Reasons = append(r.Reasons, "agents idle")
-	}
-	for _, a := range co.Agents {
-		if a.PR != "" {
-			r.Reasons = append(r.Reasons, "PR "+a.PR)
-			break
-		}
-	}
-	for _, st := range co.Stacks {
-		switch st.Class {
-		case "orphaned":
-			r.Score = 100
-			r.Reasons = append(r.Reasons, "orphaned stack: checkout is gone")
-		case "detached":
-			if r.Score < 80 {
-				r.Score = 80
-			}
-			r.Reasons = append(r.Reasons, "detached stack: nothing in the checkout uses it")
-		}
-	}
-	return r
-}
-
-// candidates ranks checkouts worth stopping: score, then bytes.
-func candidates(cos []Checkout) []Candidate {
-	out := []Candidate{}
-	for _, co := range cos {
-		if co.Reclaim.Score == 0 || co.TotalBytes < 512<<20 {
-			continue
-		}
-		out = append(out, Candidate{Path: co.Path, Display: co.Display, Branch: co.Branch, Bytes: co.TotalBytes, Score: co.Reclaim.Score, Reasons: co.Reclaim.Reasons})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		return out[i].Bytes > out[j].Bytes
-	})
-	if len(out) > 5 {
-		out = out[:5]
-	}
-	return out
-}
-
-// FindCheckout returns the current checkout for a path.
-func (c *Collector) FindCheckout(path string) (Checkout, bool) {
-	for _, co := range c.Snapshot().Checkouts {
-		if co.Path == path {
-			return co, true
-		}
-	}
-	return Checkout{}, false
 }
 
 // VolumeOnlyProjects returns the reaper's list of projects that exist only

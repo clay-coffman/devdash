@@ -4,6 +4,16 @@ const $ = (id) => document.getElementById(id);
 const GiB = 1024 ** 3, MiB = 1024 ** 2;
 let token = '';
 let lastState = null;
+let stateFetchError = '';
+let stateReceivedAt = null;
+let stateRevision = 0;
+// Monotonic browser-local poll age; server timestamps remain display facts.
+function pollClock() { return typeof performance === 'undefined' ? Date.now() : performance.now(); }
+function pollRecent(receivedAt) { return receivedAt != null && pollClock() - receivedAt <= 15000; }
+function receiveState(s) {
+  if (!s || !Array.isArray(s.checkouts) || !s.checkouts.every(c => typeof c.path === 'string' && Array.isArray(c.processes) && Array.isArray(c.stacks))) throw new Error('Unsupported devdash resource snapshot');
+  lastState = s; stateFetchError = ''; stateReceivedAt = pollClock(); stateRevision++;
+}
 let checkoutOrder = []; // Hold row positions between polls; only explicitly re-sort.
 let lastHistory = null; // samples from /api/history, redrawn when the chart is opened
 let checkoutHistory = {}; // path -> [{t, bytes}] from /api/history
@@ -36,14 +46,13 @@ function maybeNotify(s, etaMin) {
   if (psi > settings.psiSome) reasons.push(`memory pressure ${psi.toFixed(0)}%`);
   if (!reasons.length || Date.now() - lastNotify < 10 * 60e3) return;
   lastNotify = Date.now(); localStorage.setItem('devdash.lastNotify', String(lastNotify));
-  const top = s.reclaim[0] ? ` Safest to stop: ${s.reclaim[0].display.split('/').pop()} (${fmtBytes(s.reclaim[0].bytes)}).` : '';
-  const n = new Notification(`devdash: ${s.host} memory`, { body: reasons.join(' · ') + '.' + top, tag: 'devdash-mem' });
+  const n = new Notification(`devdash: ${s.host} memory`, { body: reasons.join(' · ') + '.', tag: 'devdash-mem' });
   n.onclick = () => { window.focus(); n.close(); };
 }
 
 const openSections = new Set(); // keys of <details> the user opened; survives re-render
 function details(key, summaryChildren, ...body) {
-  const d = el('details', { class: 'fold' }, el('summary', {}, ...summaryChildren), ...body);
+  const d = el('details', { class: 'fold', 'data-key': key }, el('summary', {}, ...summaryChildren), ...body);
   if (openSections.has(key)) d.open = true;
   d.addEventListener('toggle', () => { if (d.open) openSections.add(key); else openSections.delete(key); });
   return d;
@@ -55,6 +64,32 @@ function chip(tone, label, dim, attrs = {}) {
 }
 function isWebApp(p, rel) {
   return /\b(vite|next|webpack|astro|remix|nuxt)\b/.test(p.cmd) || /(^|\/)[^/]*(web|frontend|ui)$/.test(rel) || /\bpreview\b/.test(p.cmd);
+}
+
+// Shared extraction and Open construction: Overview and Resources use the same
+// observed process/checkout/port association, never board or branch guesses.
+function checkoutApps(co, unattributed = false) {
+  const views = [], others = new Map(), seen = new Set();
+  for (const p of co.processes || []) {
+    const inside = co.path && (p.cwd === co.path || p.cwd?.startsWith(co.path + '/'));
+    const rel = inside ? p.cwd.slice(co.path.length).replace(/^\//, '') : '';
+    const label = rel.split('/').pop() || p.name;
+    for (const port of p.ports || []) {
+      if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+      if (!unattributed && inside && isWebApp(p, rel)) {
+        if (!seen.has(port)) { views.push({ port, label }); seen.add(port); }
+      } else others.set(label, [...(others.get(label) || []), port]);
+    }
+  }
+  return { views, others };
+}
+function appButton(v, context = '') {
+  return el('a', {
+    class: 'view', 'data-key': 'app|' + v.port,
+    href: `http://localhost:${v.port}/`, target: '_blank', rel: 'noopener',
+    title: `Open ${v.label} on port ${v.port} in a new tab${context ? ' · ' + context : ''}`,
+    'aria-label': `Open ${v.label}, port ${v.port}${context ? ', ' + context : ''} (opens in a new tab)`,
+  }, `Open ${v.label}`, el('span', { class: 'port', text: ':' + v.port }), el('span', { 'aria-hidden': 'true', text: '↗' }));
 }
 
 function fmtBytes(b) {
@@ -74,7 +109,7 @@ function el(tag, attrs = {}, ...children) {
     if (v === undefined) continue;
     if (k === 'class') e.className = v;
     else if (k === 'text') e.textContent = v;
-    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k.startsWith('on')) e[k] = v;
     else e.setAttribute(k, v);
   }
   for (const c of children) if (c != null) e.append(c);
@@ -150,13 +185,13 @@ function drawHistory(samples, total) {
 // ---- rendering ------------------------------------------------------------
 function renderHeader(s) {
   $('host').textContent = s.host;
-  $('meta').textContent = `up ${fmtDur(s.uptime)} · ${s.counts.agents} agents, ${s.counts.working} working · ${s.counts.stacks} stacks · ${s.counts.containers} containers`;
+  $('meta').textContent = `Memory ${fmtBytes(s.mem.used)} / ${fmtBytes(s.mem.total)} · ${fmtBytes(s.mem.available)} available · CPU ${s.cpu.percent.toFixed(0)}%`;
   const etaMin = forecast(s.live, settings.availGiB * GiB);
   maybeNotify(s, etaMin);
   $('notify-btn').textContent = Notification.permission === 'granted' ? 'Notifying' : Notification.permission === 'denied' ? 'Notifications blocked' : 'Notify';
   $('notify-btn').disabled = Notification.permission !== 'default';
   const st = $('status');
-  if (s.errors && s.errors.length) { st.textContent = '⚠ ' + s.errors.join(' · '); st.className = 'err'; }
+  if (stateFetchError || (s.errors && s.errors.length)) { st.textContent = stateFetchError ? 'Resources unavailable · last known' : 'Resource warnings'; st.className = 'err'; }
   else { st.textContent = 'live · ' + new Date(s.now).toLocaleTimeString(); st.className = 'muted'; }
 
   const m = s.mem, usedP = pct(m.used, m.total), availP = pct(m.available, m.total);
@@ -207,10 +242,10 @@ function processTable(allProcs, ownCard) {
   const minor = (p) => p.rss < 32 * MiB && !(p.ports && p.ports.length);
   const procs = allProcs.filter(p => !minor(p)), rest = allProcs.filter(minor);
   const t = el('table');
-  t.append(el('tr', {}, el('th', { text: 'process' }), el('th', { text: 'command' }), el('th', { text: 'ports' }),
+  t.append(el('tr', { 'data-key': JSON.stringify(['process-header', ownCard?.path || '']) }, el('th', { text: 'process' }), el('th', { text: 'command' }), el('th', { text: 'ports' }),
     el('th', { class: 'num', text: 'cpu' }), el('th', { class: 'num', text: 'rss' }), el('th')));
   for (const p of procs) {
-    const row = el('tr', {});
+    const row = el('tr', { 'data-key': JSON.stringify(['process', ownCard?.path || '', p.pid]) });
     row.append(el('td', { text: p.name, title: 'pid ' + p.pid }));
     row.append(el('td', { class: 'cmd', text: shortCmd(p.cmd), title: p.cmd }));
     const ports = el('td', {});
@@ -227,7 +262,7 @@ function processTable(allProcs, ownCard) {
     t.append(row);
   }
   if (rest.length) {
-    const row = el('tr', { class: 'minor' });
+    const row = el('tr', { class: 'minor', 'data-key': JSON.stringify(['process-minor', ownCard?.path || '']) });
     row.append(el('td', { class: 'muted', text: `${rest.length} small`, colspan: 4,
       title: rest.map(p => `${p.name} ${p.pid}: ${shortCmd(p.cmd)}`).join('\n') }));
     row.append(el('td', { class: 'num muted', text: fmtBytes(rest.reduce((a, p) => a + p.rss, 0)) }), el('td'));
@@ -308,30 +343,13 @@ function drawCheckoutSparks() {
   }
 }
 
-function verdictChip(co) {
-  const r = co.reclaim;
-  if (!r) return null;
-  const sc = r.score;
-  const tone = sc >= 70 ? 'ok' : sc > 0 ? 'warn' : 'muted';
-  const label = sc >= 70 ? 'stoppable' : sc >= 40 ? 'probably stoppable' : sc > 0 ? 'ask first' : 'in use';
-  return chip(tone, label, r.reasons.join(' · '), { class: 'bare', title: `reclaim score ${sc}` });
-}
 const agentTone = { working: 'accent', blocked: 'warn', done: 'ok' };
+function agentStatus(status) { return ({ working: 'Working', blocked: 'Needs input', idle: 'Idle', done: 'Agent finished' })[status] || 'Status unknown'; }
 const stackTone = { live: 'ok', detached: 'warn', orphaned: 'bad' };
 
-function card(co, unattributed) {
+function card(co, unattributed, namespace = '') {
   const c = el('div', { class: 'card' + (unattributed ? ' unattributed' : '') });
-  // Web apps get a View button; other listening ports are grouped by app name.
-  const views = [], others = new Map();
-  for (const p of co.processes) {
-    if (!p.ports || !p.ports.length) continue;
-    const rel = co.path && p.cwd.startsWith(co.path) ? p.cwd.slice(co.path.length).replace(/^\//, '') : '';
-    const label = (rel.split('/').pop() || p.name);
-    for (const port of p.ports) {
-      if (!unattributed && isWebApp(p, rel)) views.push({ port, label });
-      else others.set(label, [...(others.get(label) || []), port]);
-    }
-  }
+  const { views, others } = checkoutApps(co, unattributed);
   // Identity and memory form a consistent two-column header.
   c.append(el('div', { class: 'card-head' },
     el('div', { class: 'card-identity' },
@@ -341,23 +359,20 @@ function card(co, unattributed) {
       el('div', { class: 'memory-reading' },
         unattributed ? null : el('canvas', { class: 'co-spark', 'data-path': co.path, width: 96, height: 20, title: 'last 24 hours' }),
         el('div', {}, el('span', { class: 'metric-label', text: 'Memory' }),
-          el('span', { class: 'total', text: fmtBytes(co.total_bytes) }))),
+          el('span', { class: 'total', text: fmtBytes(co.total_bytes) }),
+          co.containers_unknown ? el('small', { class: 'muted', text: 'containers unknown' }) : null)),
       growthBadge(co))));
   // App actions get their own row, never mixed with infrastructure ports or status.
   if (views.length) {
     c.append(el('div', { class: 'card-apps' },
-      ...views.map(v => el('a', {
-        class: 'view', href: `http://localhost:${v.port}/`, target: '_blank', rel: 'noopener',
-        title: `Open ${v.label} on port ${v.port} in a new tab`,
-        'aria-label': `Open ${v.label}, port ${v.port} (opens in a new tab)`,
-      }, `Open ${v.label}`, el('span', { class: 'port', text: ':' + v.port }), el('span', { 'aria-hidden': 'true', text: '↗' })))));
+      ...views.map(v => appButton(v))));
   }
-  // Everything diagnostic lives behind one disclosure; safety status stays visible.
+  // Everything diagnostic lives behind one disclosure.
   const body = el('div', { class: 'resource-body' },
     el('div', { class: 'resource-path mono', text: co.display }));
   if (co.agents.length) {
-    body.append(el('div', { class: 'resource-agents', 'aria-label': 'Agents' },
-      ...co.agents.map(a => chip(agentTone[a.status] || 'muted', a.name || a.title || 'agent', a.status + (a.pr ? ' · ' + a.pr : ''),
+    body.append(el('div', { class: 'resource-agents', role: 'group', 'aria-label': 'Agents' },
+      ...co.agents.map(a => chip(agentTone[a.status] || 'muted', a.name || a.title || 'agent', agentStatus(a.status) + (a.pr ? ' · ' + a.pr : ''),
         { title: [a.group, a.title, a.context].filter(Boolean).join('\n') }))));
   }
   if (others.size) {
@@ -367,7 +382,7 @@ function card(co, unattributed) {
   }
   const folds = el('div', { class: 'folds' });
   if (co.processes.length) {
-    folds.append(details(co.path + '|procs',
+    folds.append(details(namespace + co.path + '|procs',
       [el('b', { text: `${co.processes.length} processes` }), el('span', { text: fmtBytes(co.proc_bytes) })],
       el('div', { class: 'table-scroll' }, processTable(co.processes, co))));
   }
@@ -377,38 +392,20 @@ function card(co, unattributed) {
       el('span', { text: `${st.running}/${st.containers.length} running · ${fmtBytes(st.bytes)}${st.volumes ? ` · ${st.volumes} vol` : ''}` })];
     const tools = st.class === 'foreign' ? null : el('div', { class: 'fold-tools' },
       el('button', { class: 'danger', text: 'Stop stack', onclick: () => confirmAction('stack.down', st, co) }));
-    folds.append(details(co.path + '|stack|' + st.project, summary, tools,
+    folds.append(details(namespace + co.path + '|stack|' + st.project, summary, tools,
       el('div', { class: 'table-scroll' }, containerTable(st))));
   }
   body.append(folds);
   const counts = [`${co.processes.length} ${co.processes.length === 1 ? 'process' : 'processes'}`];
   if (co.stacks.length) counts.push(`${co.stacks.length} ${co.stacks.length === 1 ? 'stack' : 'stacks'}`);
   if (co.agents.length) counts.push(`${co.agents.length} ${co.agents.length === 1 ? 'agent' : 'agents'}`);
-  const resources = details(co.path + '|resources', [
+  const resources = details(namespace + co.path + '|resources', [
     el('b', { text: 'Resources' }),
     el('span', { class: 'resource-counts', text: counts.join(' · ') }),
-    unattributed ? null : el('span', { class: 'resource-verdict' }, verdictChip(co)),
   ], body);
   resources.className += ' card-resources';
   c.append(resources);
   return c;
-}
-
-function renderReclaim(s) {
-  const sec = $('reclaim');
-  const tight = pct(s.mem.available, s.mem.total) < 15 || (s.mem.psi.Some10 || 0) > 5;
-  sec.hidden = !s.reclaim.length;
-  sec.classList.toggle('tight', tight);
-  const total = s.reclaim.reduce((a, c) => a + c.bytes, 0);
-  $('reclaim-sub').textContent = (tight ? 'memory is tight · ' : '') + `${fmtBytes(total)} across ${s.reclaim.length}, best first`;
-  const row = (c) => el('div', { class: 'cand' },
-    el('span', { class: 'name' }, el('b', { text: c.display.split('/').pop() }), c.branch ? el('span', { class: 'branch', text: c.branch }) : null),
-    el('span', { class: 'muted reason', text: c.reasons.join(' · ') }),
-    el('span', { class: 'bytes', text: fmtBytes(c.bytes) }),
-    el('button', { class: 'danger quiet', text: 'Stop everything', onclick: () => confirmAction('checkout.stop', c) }));
-  const top = s.reclaim.slice(0, 3), more = s.reclaim.slice(3);
-  $('reclaim-list').replaceChildren(...top.map(row),
-    more.length ? details('reclaim|more', [el('span', { text: `${more.length} more · ${fmtBytes(more.reduce((a, c) => a + c.bytes, 0))}` })], ...more.map(row)) : null);
 }
 
 // Existing checkouts keep their positions. New arrivals are appended, and vanished
@@ -471,7 +468,9 @@ function renderExtras(s) {
 
 function render(s) {
   lastState = s; token = s.token;
-  renderHeader(s); renderReclaim(s); renderCheckouts(s); renderExtras(s);
+  renderHeader(s); renderCheckouts(s); renderExtras(s);
+  if (typeof renderWorkHealth === 'function') renderWorkHealth(s);
+  if (typeof renderOverview === 'function') renderOverview();
 }
 
 // ---- actions --------------------------------------------------------------
@@ -486,10 +485,6 @@ function confirmAction(kind, target, parent) {
     volRow.hidden = false;
     warn.textContent = working;
     req = () => ({ type: 'stack.down', target: target.project, volumes: $('confirm-volumes').checked });
-  } else if (kind === 'checkout.stop') {
-    $('confirm-title').textContent = `Stop everything in ${target.display.split('/').pop()}?`;
-    $('confirm-body').textContent = `Compose stacks go down (volumes kept) and every process with its cwd inside gets SIGTERM, except pi agent processes, which are left to Herdr. ${fmtBytes(target.bytes)} · ${target.reasons.join(' · ')}`;
-    req = () => ({ type: 'checkout.stop', target: target.path });
   } else if (kind === 'docker.prune_volumes') {
     $('confirm-title').textContent = `Remove volumes of ${target.projects.length} projects?`;
     $('confirm-body').textContent = 'Projects with no containers: ' + target.projects.map(p => p.project).join(', ') + '. Database contents in those volumes are lost. Docker refuses any volume still attached to a container.';
@@ -553,9 +548,11 @@ async function tick() {
     if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
     const s = await r.json();
     for (const [pid, t] of pendingKill) if (!s.checkouts.concat([s.unattributed]).some(c => c.processes.some(p => p.pid === pid)) || Date.now() - t > 60000) pendingKill.delete(pid);
-    render(s);
+    receiveState(s); render(s);
   } catch (e) {
-    $('status').textContent = '⚠ ' + e.message; $('status').className = 'err';
+    stateFetchError = e.message;
+    $('status').textContent = 'Resources unavailable · last known'; $('status').className = 'err';
+    if (typeof renderOverview === 'function') renderOverview();
   }
 }
 async function history() {

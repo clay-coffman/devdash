@@ -13,6 +13,61 @@
   <button id="settings-btn" title="Notification thresholds">Thresholds</button>
 </header>
 
+<nav id="views" aria-label="Dashboard views">
+  <button id="view-overview" aria-pressed="true">Overview</button>
+  <button id="view-work" aria-pressed="false">Workstreams</button>
+  <button id="view-resources" aria-pressed="false">Resources</button>
+</nav>
+
+<main>
+<div class="overview-summary">
+  <div id="overview-counts" aria-live="polite">Agent status unknown · apps unknown</div>
+  <details id="data-sources" class="fold">
+    <summary>Data sources <span id="source-badge" class="muted">Loading</span></summary>
+    <div id="work-sources" class="work-sources"></div>
+    <div id="resource-source" class="work-sources"></div>
+  </details>
+</div>
+<p id="source-notice" class="source-warning" aria-live="polite" hidden></p>
+<section id="overview-view" aria-label="Overview">
+  <div class="work-filters overview-filters">
+    <label>Search <input id="overview-search" type="search" placeholder="Work, agents or apps…"></label>
+    <label>Repository <select id="overview-repo"><option value="">All repositories</option></select></label>
+  </div>
+  <div class="overview-columns" aria-hidden="true"><span>Work / checkout</span><span>Agents</span><span>Memory</span><span>Apps</span><span></span></div>
+  <div id="overview-list"></div>
+  <p id="overview-empty" class="muted">Loading current work…</p>
+  <div class="overview-footer">
+    <button id="overview-other" aria-expanded="false" aria-controls="overview-list">Show other checkouts (0)</button>
+    <button id="overview-refresh" title="Reapply activity priority and fold quiet rows away">Refresh list</button>
+    <span class="muted">Rows stay put between updates.</span>
+  </div>
+</section>
+<section id="work-view" hidden aria-label="Workstreams">
+  <div class="work-scope" role="group" aria-label="Workstream scope">
+    <button id="work-scope-live" aria-pressed="true">Live</button>
+    <button id="work-scope-all" aria-pressed="false">All registered</button>
+  </div>
+  <p id="work-notice" class="source-warning" aria-live="polite" hidden></p>
+  <div class="work-filters">
+    <label>Search work <input id="work-search" type="search" placeholder="Name, task ID, checkout…"></label>
+    <label>Repository <select id="work-repo"><option value="">All repositories</option></select></label>
+  </div>
+  <div class="work-layout">
+    <div id="work-list"></div>
+    <aside id="work-detail" aria-label="Selection details">
+      <h2 id="work-detail-title">Select a workstream or checkout</h2>
+      <div id="work-detail-tabs" role="tablist" aria-label="Detail views" hidden>
+        <button id="work-tab-summary" role="tab" aria-controls="work-detail-body" aria-selected="true" tabindex="0">Summary</button>
+        <button id="work-tab-agents" role="tab" aria-controls="work-detail-body" aria-selected="false" tabindex="-1">Agents</button>
+        <button id="work-tab-resources" role="tab" aria-controls="work-detail-body" aria-selected="false" tabindex="-1">Resources</button>
+      </div>
+      <div id="work-detail-body" role="tabpanel" aria-labelledby="work-tab-summary" tabindex="0"></div>
+    </aside>
+  </div>
+</section>
+
+<div id="resources-view" hidden>
 <section id="tiles" class="tiles">
   <div class="tile" id="tile-mem">
     <h2>Memory <span class="muted" id="mem-sub"></span></h2>
@@ -36,11 +91,6 @@
     <h2>Disk</h2>
     <div id="disk-list"></div>
   </div>
-</section>
-
-<section id="reclaim" class="reclaim" hidden>
-  <h2>Safe to stop <span class="muted" id="reclaim-sub"></span></h2>
-  <div id="reclaim-list"></div>
 </section>
 
 <section id="checkouts">
@@ -72,6 +122,9 @@
   <summary><h2>Listening ports</h2><span class="muted" id="ports-sum"></span></summary>
   <div class="more-body"><div id="ports" class="ports"></div></div>
 </details>
+
+</div>
+</main>
 
 <dialog id="logs">
   <form method="dialog">
@@ -107,5 +160,7 @@
 
 <div id="toast" hidden></div>
 <script src="/static/app.js"></script>
+<script src="/static/work.js"></script>
+<script src="/static/overview.js"></script>
 </body>
 </html>
